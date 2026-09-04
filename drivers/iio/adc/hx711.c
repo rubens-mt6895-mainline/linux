@@ -4,8 +4,6 @@
  *
  * Copyright (c) 2016 Andreas Klinger <ak@it-klinger.de>
  */
-#include <linux/array_size.h>
-#include <linux/dev_printk.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -21,8 +19,6 @@
 #include <linux/iio/triggered_buffer.h>
 #include <linux/gpio/consumer.h>
 #include <linux/regulator/consumer.h>
-
-#define HX711_DATA_BITS		24
 
 /* gain to pulse and scale conversion */
 #define HX711_GAIN_MAX		3
@@ -77,20 +73,6 @@ static int hx711_get_scale_to_gain(const int *gain_scale, int scale)
 	return -EINVAL;
 }
 
-/**
- * struct hx711_chip_info - per-variant static configuration
- * @name: IIO device name
- * @channels: channel specification array
- * @num_channels: number of entries in @channels
- * @iio_info: IIO info ops for this variant
- */
-struct hx711_chip_info {
-	const char			*name;
-	const struct iio_chan_spec	*channels __counted_by_ptr(num_channels);
-	unsigned int			num_channels;
-	const struct iio_info		*iio_info;
-};
-
 struct hx711_data {
 	struct device		*dev;
 	struct gpio_desc	*gpiod_pd_sck;
@@ -98,7 +80,6 @@ struct hx711_data {
 	int			gain_set;	/* gain set on device */
 	int			gain_chan_a;	/* gain for channel A */
 	int			gain_scale[HX711_GAIN_MAX];
-	const struct hx711_chip_info	*chip_info;
 	struct mutex		lock;
 	/*
 	 * triggered buffer
@@ -156,18 +137,17 @@ static int hx711_cycle(struct hx711_data *hx711_data)
 	return gpiod_get_value(hx711_data->gpiod_dout);
 }
 
-static int hx711_read(struct hx711_data *hx711_data, int trailing_pulses)
+static int hx711_read(struct hx711_data *hx711_data)
 {
+	int i, ret;
 	int value = 0;
-	int val;
-	int ret;
+	int val = gpiod_get_value(hx711_data->gpiod_dout);
 
 	/* we double check if it's really down */
-	val = gpiod_get_value(hx711_data->gpiod_dout);
 	if (val)
 		return -EIO;
 
-	for (int i = 0; i < HX711_DATA_BITS; i++) {
+	for (i = 0; i < 24; i++) {
 		value <<= 1;
 		ret = hx711_cycle(hx711_data);
 		if (ret)
@@ -176,7 +156,7 @@ static int hx711_read(struct hx711_data *hx711_data, int trailing_pulses)
 
 	value ^= 0x800000;
 
-	for (int i = 0; i < trailing_pulses; i++)
+	for (i = 0; i < hx711_get_gain_to_pulse(hx711_data->gain_set); i++)
 		hx711_cycle(hx711_data);
 
 	return value;
@@ -206,9 +186,8 @@ static int hx711_wait_for_ready(struct hx711_data *hx711_data)
 
 static int hx711_reset(struct hx711_data *hx711_data)
 {
-	int val;
+	int val = hx711_wait_for_ready(hx711_data);
 
-	val = hx711_wait_for_ready(hx711_data);
 	if (val) {
 		/*
 		 * an examination with the oszilloscope indicated
@@ -240,8 +219,7 @@ static int hx711_set_gain_for_channel(struct hx711_data *hx711_data, int chan)
 		if (hx711_data->gain_set == 32) {
 			hx711_data->gain_set = hx711_data->gain_chan_a;
 
-			ret = hx711_read(hx711_data,
-					 hx711_get_gain_to_pulse(hx711_data->gain_set));
+			ret = hx711_read(hx711_data);
 			if (ret < 0)
 				return ret;
 
@@ -253,8 +231,7 @@ static int hx711_set_gain_for_channel(struct hx711_data *hx711_data, int chan)
 		if (hx711_data->gain_set != 32) {
 			hx711_data->gain_set = 32;
 
-			ret = hx711_read(hx711_data,
-					 hx711_get_gain_to_pulse(hx711_data->gain_set));
+			ret = hx711_read(hx711_data);
 			if (ret < 0)
 				return ret;
 
@@ -267,26 +244,10 @@ static int hx711_set_gain_for_channel(struct hx711_data *hx711_data, int chan)
 	return 0;
 }
 
-static int hx711_set_hx711_channel(struct hx711_data *hx711_data,
-				   const struct iio_chan_spec *chan,
-				   int *trailing_pulses)
+static int hx711_reset_read(struct hx711_data *hx711_data, int chan)
 {
 	int ret;
-
-	ret = hx711_set_gain_for_channel(hx711_data, chan->channel);
-	if (ret < 0)
-		return ret;
-
-	*trailing_pulses = hx711_get_gain_to_pulse(hx711_data->gain_set);
-
-	return 0;
-}
-
-static int hx711_reset_read(struct hx711_data *hx711_data,
-			    const struct iio_chan_spec *chan)
-{
-	int trailing_pulses;
-	int ret;
+	int val;
 
 	/*
 	 * hx711_reset() must be called from here
@@ -297,11 +258,13 @@ static int hx711_reset_read(struct hx711_data *hx711_data,
 		return -EIO;
 	}
 
-	ret = hx711_set_hx711_channel(hx711_data, chan, &trailing_pulses);
+	ret = hx711_set_gain_for_channel(hx711_data, chan);
 	if (ret < 0)
 		return ret;
 
-	return hx711_read(hx711_data, trailing_pulses);
+	val = hx711_read(hx711_data);
+
+	return val;
 }
 
 static int hx711_read_raw(struct iio_dev *indio_dev,
@@ -314,7 +277,7 @@ static int hx711_read_raw(struct iio_dev *indio_dev,
 	case IIO_CHAN_INFO_RAW:
 		mutex_lock(&hx711_data->lock);
 
-		*val = hx711_reset_read(hx711_data, chan);
+		*val = hx711_reset_read(hx711_data, chan->channel);
 
 		mutex_unlock(&hx711_data->lock);
 
@@ -368,8 +331,7 @@ static int hx711_write_raw(struct iio_dev *indio_dev,
 			if (gain != 32)
 				hx711_data->gain_chan_a = gain;
 
-			ret = hx711_read(hx711_data,
-					 hx711_get_gain_to_pulse(hx711_data->gain_set));
+			ret = hx711_read(hx711_data);
 			if (ret < 0) {
 				mutex_unlock(&hx711_data->lock);
 				return ret;
@@ -404,8 +366,8 @@ static irqreturn_t hx711_trigger(int irq, void *p)
 	memset(&hx711_data->buffer, 0, sizeof(hx711_data->buffer));
 
 	iio_for_each_active_channel(indio_dev, i) {
-		hx711_data->buffer.channel[j] =
-			hx711_reset_read(hx711_data, &indio_dev->channels[i]);
+		hx711_data->buffer.channel[j] = hx711_reset_read(hx711_data,
+					indio_dev->channels[i].channel);
 		j++;
 	}
 
@@ -493,16 +455,8 @@ static const struct iio_chan_spec hx711_chan_spec[] = {
 	IIO_CHAN_SOFT_TIMESTAMP(2),
 };
 
-static const struct hx711_chip_info hx711_chip = {
-	.name		= "hx711",
-	.channels	= hx711_chan_spec,
-	.iio_info	= &hx711_iio_info,
-	.num_channels	= ARRAY_SIZE(hx711_chan_spec),
-};
-
 static int hx711_probe(struct platform_device *pdev)
 {
-	const struct hx711_chip_info *chip_info;
 	struct device *dev = &pdev->dev;
 	struct hx711_data *hx711_data;
 	struct iio_dev *indio_dev;
@@ -517,12 +471,6 @@ static int hx711_probe(struct platform_device *pdev)
 	hx711_data->dev = dev;
 
 	mutex_init(&hx711_data->lock);
-
-	chip_info = device_get_match_data(dev);
-	if (!chip_info)
-		return dev_err_probe(dev, -ENODEV, "missing driver data\n");
-
-	hx711_data->chip_info = chip_info;
 
 	/*
 	 * PD_SCK stands for power down and serial clock input of HX711
@@ -585,11 +533,11 @@ static int hx711_probe(struct platform_device *pdev)
 	hx711_data->data_ready_delay_ns =
 				1000000000 / hx711_data->clock_frequency;
 
-	indio_dev->name = chip_info->name;
-	indio_dev->info = chip_info->iio_info;
+	indio_dev->name = "hx711";
+	indio_dev->info = &hx711_iio_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
-	indio_dev->channels = chip_info->channels;
-	indio_dev->num_channels = chip_info->num_channels;
+	indio_dev->channels = hx711_chan_spec;
+	indio_dev->num_channels = ARRAY_SIZE(hx711_chan_spec);
 
 	ret = devm_iio_triggered_buffer_setup(dev, indio_dev,
 					      iio_pollfunc_store_time,
@@ -606,7 +554,7 @@ static int hx711_probe(struct platform_device *pdev)
 }
 
 static const struct of_device_id of_hx711_match[] = {
-	{ .compatible = "avia,hx711", .data = &hx711_chip },
+	{ .compatible = "avia,hx711", },
 	{ }
 };
 

@@ -16,9 +16,7 @@ description: |
 
   See also:
     include/dt-bindings/clock/qcom,glymur-videocc.h
-    include/dt-bindings/clock/qcom,hawi-videocc.h
     include/dt-bindings/clock/qcom,kaanapali-videocc.h
-    include/dt-bindings/clock/qcom,maili-videocc.h
     include/dt-bindings/clock/qcom,sm8450-videocc.h
     include/dt-bindings/clock/qcom,sm8650-videocc.h
     include/dt-bindings/clock/qcom,sm8750-videocc.h
@@ -28,9 +26,7 @@ properties:
   compatible:
     enum:
       - qcom,glymur-videocc
-      - qcom,hawi-videocc
       - qcom,kaanapali-videocc
-      - qcom,maili-videocc
       - qcom,sm8450-videocc
       - qcom,sm8475-videocc
       - qcom,sm8550-videocc
@@ -69,11 +65,14 @@ allOf:
   - if:
       properties:
         compatible:
-          not:
-            contains:
-              enum:
-                - qcom,sm8475-videocc
-                - qcom,sm8650-videocc
+          contains:
+            enum:
+              - qcom,glymur-videocc
+              - qcom,kaanapali-videocc
+              - qcom,sm8450-videocc
+              - qcom,sm8550-videocc
+              - qcom,sm8750-videocc
+              - qcom,x1p42100-videocc
     then:
       required:
         - required-opps

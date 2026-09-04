@@ -1789,7 +1789,8 @@ int bma400_probe(struct device *dev, struct regmap *regmap, int irq,
 						IRQF_TRIGGER_RISING | IRQF_ONESHOT,
 						indio_dev->name, indio_dev);
 		if (ret)
-			return ret;
+			return dev_err_probe(data->dev, ret,
+					     "request irq %d failed\n", irq);
 	}
 
 	ret = devm_iio_triggered_buffer_setup(dev, indio_dev, NULL,

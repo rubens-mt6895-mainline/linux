@@ -1545,8 +1545,11 @@ static int apds9160_probe(struct i2c_client *client)
 						apds9160_irq_handler,
 						IRQF_ONESHOT, "apds9160_event",
 						indio_dev);
-		if (ret)
-			return ret;
+		if (ret) {
+			return dev_err_probe(dev, ret,
+					     "request irq (%d) failed\n",
+					     client->irq);
+		}
 	} else {
 		indio_dev->info = &apds9160_info_no_events;
 		indio_dev->channels = apds9160_channels_without_events;

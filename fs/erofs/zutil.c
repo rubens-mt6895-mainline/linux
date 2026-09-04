@@ -70,15 +70,15 @@ int z_erofs_gbuf_growsize(unsigned int nrpages)
 	void *ptr, *old_ptr;
 	int last, i, j;
 
-	guard(mutex)(&gbuf_resize_mutex);
+	mutex_lock(&gbuf_resize_mutex);
 	/* avoid shrinking gbufs, since no idea how many fses rely on */
-	if (nrpages <= z_erofs_gbuf_nrpages)
+	if (nrpages <= z_erofs_gbuf_nrpages) {
+		mutex_unlock(&gbuf_resize_mutex);
 		return 0;
+	}
 
 	for (i = 0; i < z_erofs_gbuf_count; ++i) {
 		gbuf = &z_erofs_gbufpool[i];
-		if (gbuf->nrpages >= nrpages)
-			continue;
 		tmp_pages = kzalloc_objs(*tmp_pages, nrpages);
 		if (!tmp_pages)
 			goto out;
@@ -87,7 +87,8 @@ int z_erofs_gbuf_growsize(unsigned int nrpages)
 			tmp_pages[j] = gbuf->pages[j];
 		do {
 			last = j;
-			j = alloc_pages_bulk(GFP_KERNEL, nrpages, tmp_pages);
+			j = alloc_pages_bulk(GFP_KERNEL, nrpages,
+					     tmp_pages);
 			if (last == j)
 				goto out;
 		} while (j != nrpages);
@@ -98,23 +99,24 @@ int z_erofs_gbuf_growsize(unsigned int nrpages)
 
 		spin_lock(&gbuf->lock);
 		kfree(gbuf->pages);
-		old_ptr = gbuf->ptr;
 		gbuf->pages = tmp_pages;
+		old_ptr = gbuf->ptr;
 		gbuf->ptr = ptr;
 		gbuf->nrpages = nrpages;
 		spin_unlock(&gbuf->lock);
-		vunmap(old_ptr);
-		tmp_pages = NULL;
+		if (old_ptr)
+			vunmap(old_ptr);
 	}
 	z_erofs_gbuf_nrpages = nrpages;
 out:
-	if (unlikely(tmp_pages)) {
+	if (i < z_erofs_gbuf_count && tmp_pages) {
 		for (j = 0; j < nrpages; ++j)
 			if (tmp_pages[j] && (j >= gbuf->nrpages ||
 					     tmp_pages[j] != gbuf->pages[j]))
 				__free_page(tmp_pages[j]);
 		kfree(tmp_pages);
 	}
+	mutex_unlock(&gbuf_resize_mutex);
 	return i < z_erofs_gbuf_count ? -ENOMEM : 0;
 }
 

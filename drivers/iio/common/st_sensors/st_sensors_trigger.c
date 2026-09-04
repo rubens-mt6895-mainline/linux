@@ -211,8 +211,10 @@ int st_sensors_allocate_trigger(struct iio_dev *indio_dev,
 					irq_trig,
 					sdata->trig->name,
 					sdata->trig);
-	if (err)
+	if (err) {
+		dev_err(parent, "failed to request trigger IRQ.\n");
 		return err;
+	}
 
 	err = devm_iio_trigger_register(parent, sdata->trig);
 	if (err < 0) {

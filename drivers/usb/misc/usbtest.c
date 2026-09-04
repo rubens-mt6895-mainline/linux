@@ -3054,7 +3054,6 @@ static struct usb_driver usbtest_driver = {
 	.disconnect =	usbtest_disconnect,
 	.suspend =	usbtest_suspend,
 	.resume =	usbtest_resume,
-	.no_dynamic_id = 1,
 };
 
 /*-------------------------------------------------------------------------*/

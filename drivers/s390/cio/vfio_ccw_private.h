@@ -134,8 +134,7 @@ struct vfio_ccw_private {
 	struct work_struct	notoper_work;
 } __aligned(8);
 
-int vfio_ccw_sch_quiesce(struct subchannel *sch)
-	__must_hold(&sch->lock);
+int vfio_ccw_sch_quiesce(struct subchannel *sch);
 void vfio_ccw_sch_io_todo(struct work_struct *work);
 void vfio_ccw_crw_todo(struct work_struct *work);
 void vfio_ccw_notoper_todo(struct work_struct *work);

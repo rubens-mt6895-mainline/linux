@@ -1251,8 +1251,10 @@ static int si1145_probe_trigger(struct iio_dev *indio_dev)
 			  IRQF_TRIGGER_FALLING | IRQF_NO_THREAD,
 			  "si1145_irq",
 			  trig);
-	if (ret)
+	if (ret < 0) {
+		dev_err(&client->dev, "irq request failed\n");
 		return ret;
+	}
 
 	ret = devm_iio_trigger_register(&client->dev, trig);
 	if (ret)

@@ -761,7 +761,7 @@ static int panthor_gem_mmap(struct drm_gem_object *obj, struct vm_area_struct *v
 		return ret;
 	}
 
-	if (vma_is_cow_mapping(vma))
+	if (is_cow_mapping(vma->vm_flags))
 		return -EINVAL;
 
 	if (!refcount_inc_not_zero(&bo->cmap.mmap_count)) {
@@ -776,7 +776,7 @@ static int panthor_gem_mmap(struct drm_gem_object *obj, struct vm_area_struct *v
 	}
 
 	vm_flags_set(vma, VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP);
-	vma->vm_page_prot = vma_get_page_prot(vma);
+	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
 	if (should_map_wc(bo))
 		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
 
@@ -1351,24 +1351,6 @@ err_free_kbo:
 	return ERR_PTR(ret);
 }
 
-/**
- * panthor_dummy_bo_create() - Create a Panthor BO meant to back sparse bindings.
- * @ptdev: Device.
- *
- * Return: A valid pointer in case of success, an ERR_PTR() otherwise.
- */
-struct panthor_gem_object *
-panthor_dummy_bo_create(struct panthor_device *ptdev)
-{
-	/* Since even when the DRM device's mount point has enabled THP we have no guarantee
-	 * that drm_gem_get_pages() will return a single 2MiB PMD, and also we cannot be sure
-	 * that the 2MiB won't be reclaimed and re-allocated later on as 4KiB chunks, it doesn't
-	 * make sense to pre-populate this object's page array, nor to fall back on a BO size
-	 * of 4KiB. Sticking to a dummy object size of 2MiB lets us keep things simple for now.
-	 */
-	return panthor_gem_create(&ptdev->base, SZ_2M, DRM_PANTHOR_BO_NO_MMAP, NULL, 0);
-}
-
 static bool can_swap(void)
 {
 	return get_nr_swap_pages() > 0;
@@ -1565,10 +1547,23 @@ out:
 	return SHRINK_STOP;
 }
 
+/* XAGA: allow disabling the GEM shrinker. Some memory-heavy Vulkan
+ * workloads (Unity, 3dmark) trigger reclaim storms: the shrinker evicts
+ * GPU-mapped BOs inline in the allocating thread and the GPU then faults
+ * on the evicted buffers, stalling the whole system in bursts.
+ */
+static bool panthor_disable_shrinker = true;
+
 int panthor_gem_shrinker_init(struct panthor_device *ptdev)
 {
 	struct shrinker *shrinker;
 
+	/* The LRU lists are used by the BO lifetime code regardless of
+	 * whether the shrinker is registered, so they must always be
+	 * initialized. Only the shrinker registration is skipped when the
+	 * param is set (XAGA: reclaim storms under memory pressure stall
+	 * the whole system in sync with the lag).
+	 */
 	INIT_LIST_HEAD(&ptdev->reclaim.vms);
 	drm_gem_lru_init(&ptdev->reclaim.unused);
 	drm_gem_lru_init(&ptdev->reclaim.mmapped);
@@ -1579,6 +1574,9 @@ int panthor_gem_shrinker_init(struct panthor_device *ptdev)
 	fs_reclaim_acquire(GFP_KERNEL);
 	might_lock(&ptdev->base.gem_lru_mutex);
 	fs_reclaim_release(GFP_KERNEL);
+
+	if (panthor_disable_shrinker)
+		return 0;
 
 	shrinker = shrinker_alloc(0, "drm-panthor-gem");
 	if (!shrinker)

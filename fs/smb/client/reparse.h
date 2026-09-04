@@ -98,21 +98,15 @@ static inline bool reparse_inode_match(struct inode *inode,
 		timespec64_equal(&ctime, &fattr->cf_ctime);
 }
 
-static inline u32 cifs_open_data_attrs(const struct cifs_open_info_data *data)
-{
-	if (data->contains_posix_file_info)
-		return le32_to_cpu(data->posix_fi.DosAttributes);
-
-	return le32_to_cpu(data->fi.Attributes);
-}
-
 static inline bool cifs_open_data_reparse(struct cifs_open_info_data *data)
 {
-	u32 attrs = cifs_open_data_attrs(data);
+	u32 attrs;
+	bool ret;
 
 	if (data->contains_posix_file_info) {
 		struct smb311_posix_qinfo *fi = &data->posix_fi;
 
+		attrs = le32_to_cpu(fi->DosAttributes);
 		if (data->reparse_point) {
 			attrs |= ATTR_REPARSE_POINT;
 			fi->DosAttributes = cpu_to_le32(attrs);
@@ -121,13 +115,16 @@ static inline bool cifs_open_data_reparse(struct cifs_open_info_data *data)
 	} else {
 		struct smb2_file_all_info *fi = &data->fi;
 
+		attrs = le32_to_cpu(fi->Attributes);
 		if (data->reparse_point) {
 			attrs |= ATTR_REPARSE_POINT;
 			fi->Attributes = cpu_to_le32(attrs);
 		}
 	}
 
-	return attrs & ATTR_REPARSE_POINT;
+	ret = attrs & ATTR_REPARSE_POINT;
+
+	return ret;
 }
 
 bool cifs_reparse_point_to_fattr(struct cifs_sb_info *cifs_sb,

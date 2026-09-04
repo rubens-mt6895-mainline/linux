@@ -24,13 +24,12 @@ use crate::{
         IovIterSource, //
     },
     mm::virt::VmaNew,
-    module::this_module,
     prelude::*,
     seq_file::SeqFile,
     types::{
         ForeignOwnable,
         Opaque, //
-    }, //
+    },
 };
 use core::marker::PhantomData;
 
@@ -290,7 +289,7 @@ impl<T: MiscDevice> MiscdeviceVTable<T> {
     /// # Safety
     ///
     /// `kiocb` must be correspond to a valid file that is associated with a
-    /// `MiscDeviceRegistration<T>`. `iter` must be a valid `struct iov_iter` for reading.
+    /// `MiscDeviceRegistration<T>`. `iter` must be a valid `struct iov_iter` for writing.
     unsafe extern "C" fn write_iter(
         kiocb: *mut bindings::kiocb,
         iter: *mut bindings::iov_iter,
@@ -431,7 +430,6 @@ impl<T: MiscDevice> MiscdeviceVTable<T> {
         } else {
             None
         },
-        owner: this_module::<T::OwnerModule>().as_ptr(),
         ..pin_init::zeroed()
     };
 

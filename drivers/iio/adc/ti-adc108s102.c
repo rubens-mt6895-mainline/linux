@@ -276,7 +276,7 @@ static const struct acpi_device_id adc108s102_acpi_ids[] = {
 MODULE_DEVICE_TABLE(acpi, adc108s102_acpi_ids);
 
 static const struct spi_device_id adc108s102_id[] = {
-	{ .name = "adc108s102" },
+	{ "adc108s102", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, adc108s102_id);

@@ -1276,8 +1276,10 @@ static int ad2s1210_debugfs_reg_access(struct iio_dev *indio_dev,
 	return regmap_write(st->regmap, reg, writeval);
 }
 
-static void ad2s1210_scan_to_buffers(struct iio_dev *indio_dev, s64 timestamp)
+static irqreturn_t ad2s1210_trigger_handler(int irq, void *p)
 {
+	struct iio_poll_func *pf = p;
+	struct iio_dev *indio_dev = pf->indio_dev;
 	struct ad2s1210_state *st = iio_priv(indio_dev);
 	size_t chan = 0;
 	int ret;
@@ -1293,15 +1295,15 @@ static void ad2s1210_scan_to_buffers(struct iio_dev *indio_dev, s64 timestamp)
 					       AD2S1210_REG_POSITION_MSB,
 					       &st->sample.raw, 2);
 			if (ret < 0)
-				return;
+				goto error_ret;
 		} else {
 			ret = ad2s1210_set_mode(st, MOD_POS);
 			if (ret < 0)
-				return;
+				goto error_ret;
 
 			ret = spi_read(st->sdev, &st->sample, 3);
 			if (ret < 0)
-				return;
+				goto error_ret;
 		}
 
 		memcpy(&st->scan.chan[chan++], &st->sample.raw, 2);
@@ -1313,15 +1315,15 @@ static void ad2s1210_scan_to_buffers(struct iio_dev *indio_dev, s64 timestamp)
 					       AD2S1210_REG_VELOCITY_MSB,
 					       &st->sample.raw, 2);
 			if (ret < 0)
-				return;
+				goto error_ret;
 		} else {
 			ret = ad2s1210_set_mode(st, MOD_VEL);
 			if (ret < 0)
-				return;
+				goto error_ret;
 
 			ret = spi_read(st->sdev, &st->sample, 3);
 			if (ret < 0)
-				return;
+				goto error_ret;
 		}
 
 		memcpy(&st->scan.chan[chan++], &st->sample.raw, 2);
@@ -1332,22 +1334,16 @@ static void ad2s1210_scan_to_buffers(struct iio_dev *indio_dev, s64 timestamp)
 
 		ret = regmap_read(st->regmap, AD2S1210_REG_FAULT, &reg_val);
 		if (ret < 0)
-			return;
+			goto error_ret;
 
 		st->sample.fault = reg_val;
 	}
 
-	ad2s1210_push_events(indio_dev, st->sample.fault, timestamp);
+	ad2s1210_push_events(indio_dev, st->sample.fault, pf->timestamp);
 	iio_push_to_buffers_with_ts(indio_dev, &st->scan, sizeof(st->scan),
-				    timestamp);
-}
+				    pf->timestamp);
 
-static irqreturn_t ad2s1210_trigger_handler(int irq, void *p)
-{
-	struct iio_poll_func *pf = p;
-	struct iio_dev *indio_dev = pf->indio_dev;
-
-	ad2s1210_scan_to_buffers(indio_dev, pf->timestamp);
+error_ret:
 	iio_trigger_notify_done(indio_dev->trig);
 
 	return IRQ_HANDLED;
@@ -1601,7 +1597,7 @@ static const struct of_device_id ad2s1210_of_match[] = {
 MODULE_DEVICE_TABLE(of, ad2s1210_of_match);
 
 static const struct spi_device_id ad2s1210_id[] = {
-	{ .name = "ad2s1210" },
+	{ "ad2s1210" },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, ad2s1210_id);

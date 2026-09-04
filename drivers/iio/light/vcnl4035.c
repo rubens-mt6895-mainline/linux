@@ -145,6 +145,16 @@ static const struct iio_trigger_ops vcnl4035_trigger_ops = {
 	.set_trigger_state = vcnl4035_als_drdy_set_state,
 };
 
+static int vcnl4035_set_pm_runtime_state(struct vcnl4035_data *data, bool on)
+{
+	struct device *dev = &data->client->dev;
+
+	if (on)
+		return pm_runtime_resume_and_get(dev);
+
+	return pm_runtime_put_autosuspend(dev);
+}
+
 static int vcnl4035_read_info_raw(struct iio_dev *indio_dev,
 				  struct iio_chan_spec const *chan, int *val)
 {
@@ -192,11 +202,11 @@ static int vcnl4035_read_raw(struct iio_dev *indio_dev,
 
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
-		ret = pm_runtime_resume_and_get(&data->client->dev);
+		ret = vcnl4035_set_pm_runtime_state(data, true);
 		if  (ret < 0)
 			return ret;
 		ret = vcnl4035_read_info_raw(indio_dev, chan, val);
-		pm_runtime_put_autosuspend(&data->client->dev);
+		vcnl4035_set_pm_runtime_state(data, false);
 		return ret;
 	case IIO_CHAN_INFO_INT_TIME:
 		*val = 50;
@@ -227,7 +237,7 @@ static int vcnl4035_write_raw(struct iio_dev *indio_dev,
 		if (val <= 0 || val > 800)
 			return -EINVAL;
 
-		ret = pm_runtime_resume_and_get(&data->client->dev);
+		ret = vcnl4035_set_pm_runtime_state(data, true);
 		if  (ret < 0)
 			return ret;
 
@@ -237,7 +247,7 @@ static int vcnl4035_write_raw(struct iio_dev *indio_dev,
 		if (!ret)
 			data->als_it_val = val / 100;
 
-		pm_runtime_put_autosuspend(&data->client->dev);
+		vcnl4035_set_pm_runtime_state(data, false);
 		return ret;
 	default:
 		return -EINVAL;
@@ -637,10 +647,7 @@ static int vcnl4035_runtime_resume(struct device *dev)
 	struct vcnl4035_data *data = iio_priv(indio_dev);
 	int ret;
 
-	ret = regcache_sync(data->regmap);
-	if (ret < 0)
-		return ret;
-
+	regcache_sync(data->regmap);
 	ret = vcnl4035_set_als_power_state(data, VCNL4035_MODE_ALS_ENABLE);
 	if (ret < 0)
 		return ret;

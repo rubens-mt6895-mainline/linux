@@ -40,7 +40,7 @@ struct smbios_device {
 	struct list_head list;
 	struct device *device;
 	int priority;
-	smbios_callback_fn_t call_fn;
+	int (*call_fn)(struct calling_interface_buffer *arg);
 };
 
 struct smbios_call {
@@ -146,7 +146,7 @@ int dell_smbios_error(int value)
 }
 EXPORT_SYMBOL_GPL(dell_smbios_error);
 
-int dell_smbios_register_device(struct device *d, int priority, smbios_callback_fn_t call_fn)
+int dell_smbios_register_device(struct device *d, int priority, void *call_fn)
 {
 	struct smbios_device *priv;
 
@@ -312,7 +312,7 @@ int dell_smbios_call(struct calling_interface_buffer *buffer)
 		goto out_smbios_call;
 	}
 
-	ret = selected->call_fn(selected->device, buffer);
+	ret = selected->call_fn(buffer);
 
 out_smbios_call:
 	mutex_unlock(&smbios_mutex);

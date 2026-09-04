@@ -34,6 +34,8 @@
 #define TSC_ADJUST_VALUE (1ll << 32)
 #define TSC_OFFSET_VALUE -(1ll << 48)
 
+#define L2_GUEST_STACK_SIZE 64
+
 enum {
 	PORT_ABORT = 0x1000,
 	PORT_REPORT,
@@ -73,6 +75,8 @@ static void l2_guest_code(void)
 
 static void l1_guest_code(void *data)
 {
+	unsigned long l2_guest_stack[L2_GUEST_STACK_SIZE];
+
 	/* Set TSC from L1 and make sure TSC_ADJUST is updated correctly */
 	GUEST_ASSERT(rdtsc() < TSC_ADJUST_VALUE);
 	wrmsr(MSR_IA32_TSC, rdtsc() - TSC_ADJUST_VALUE);
@@ -89,7 +93,8 @@ static void l1_guest_code(void *data)
 		GUEST_ASSERT(prepare_for_vmx_operation(vmx_pages));
 		GUEST_ASSERT(load_vmcs(vmx_pages));
 
-		prepare_vmcs(vmx_pages, l2_guest_code);
+		prepare_vmcs(vmx_pages, l2_guest_code,
+			     &l2_guest_stack[L2_GUEST_STACK_SIZE]);
 		control = vmreadz(CPU_BASED_VM_EXEC_CONTROL);
 		control |= CPU_BASED_USE_MSR_BITMAPS | CPU_BASED_USE_TSC_OFFSETTING;
 		vmwrite(CPU_BASED_VM_EXEC_CONTROL, control);
@@ -100,7 +105,8 @@ static void l1_guest_code(void *data)
 	} else {
 		struct svm_test_data *svm = data;
 
-		generic_svm_setup(svm, l2_guest_code);
+		generic_svm_setup(svm, l2_guest_code,
+				  &l2_guest_stack[L2_GUEST_STACK_SIZE]);
 
 		svm->vmcb->control.tsc_offset = TSC_OFFSET_VALUE;
 		run_guest(svm->vmcb, svm->vmcb_gpa);

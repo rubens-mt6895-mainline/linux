@@ -122,8 +122,11 @@ int hts221_allocate_trigger(struct iio_dev *iio_dev)
 					hts221_trigger_handler_thread,
 					irq_type | IRQF_ONESHOT,
 					hw->name, hw);
-	if (err)
+	if (err) {
+		dev_err(hw->dev, "failed to request trigger irq %d\n",
+			hw->irq);
 		return err;
+	}
 
 	hw->trig = devm_iio_trigger_alloc(hw->dev, "%s-trigger",
 					  iio_dev->name);

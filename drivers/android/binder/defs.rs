@@ -4,8 +4,6 @@
 
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
-use core::ptr;
-
 use kernel::{
     transmute::{AsBytes, FromBytes},
     uapi::{self, *},
@@ -148,7 +146,7 @@ decl_wrapper!(ExtendedError, uapi::binder_extended_error);
 impl BinderVersion {
     pub(crate) fn current() -> Self {
         Self(MaybeUninit::new(uapi::binder_version {
-            protocol_version: BINDER_CURRENT_PROTOCOL_VERSION as i32,
+            protocol_version: BINDER_CURRENT_PROTOCOL_VERSION as _,
         }))
     }
 }
@@ -167,8 +165,8 @@ impl BinderTransactionDataSecctx {
     pub(crate) fn tr_data(&mut self) -> &mut BinderTransactionData {
         // SAFETY: Transparent wrapper is safe to transmute.
         unsafe {
-            &mut *(ptr::from_mut::<uapi::binder_transaction_data>(&mut self.transaction_data)
-                .cast::<BinderTransactionData>())
+            &mut *(&mut self.transaction_data as *mut uapi::binder_transaction_data
+                as *mut BinderTransactionData)
         }
     }
 }

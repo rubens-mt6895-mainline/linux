@@ -50,9 +50,6 @@ properties:
       - const: otg
       - const: wakeup
 
-  iommus:
-    maxItems: 1
-
   port:
     $ref: /schemas/graph.yaml#/properties/port
     description:

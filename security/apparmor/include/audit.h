@@ -21,14 +21,13 @@
 #include "label.h"
 
 extern const char *const audit_mode_names[];
+#define AUDIT_MAX_INDEX 5
 enum audit_mode {
 	AUDIT_NORMAL,		/* follow normal auditing of accesses */
 	AUDIT_QUIET_DENIED,	/* quiet all denied access messages */
-	AUDIT_QUIET_ALLOWED,	/* quiet all allowed access messages */
 	AUDIT_QUIET,		/* quiet all messages */
 	AUDIT_NOQUIET,		/* do not quiet audit messages */
-	AUDIT_ALL,		/* audit all accesses */
-	AUDIT_MODE_NAMES_COUNT	/* Must be last entry */
+	AUDIT_ALL		/* audit all accesses */
 };
 
 enum audit_type {
@@ -184,8 +183,6 @@ struct apparmor_audit_data {
 		.common.apparmor_audit_data = &NAME,			\
 	};
 
-int aa_select_audit_type(u32 denied, const struct aa_perms *perms);
-
 void aa_audit_msg(int type, struct apparmor_audit_data *ad,
 		  void (*cb) (struct audit_buffer *, void *));
 int aa_audit(int type, struct aa_profile *profile,
@@ -199,9 +196,6 @@ int aa_audit(int type, struct aa_profile *profile,
 	(AD)->error;					\
 })
 
-int aa_audit_perm_error(struct aa_label *label, u32 request, int error,
-			struct apparmor_audit_data *ad,
-			void (*cb)(struct audit_buffer *, void *));
 
 static inline int complain_error(int error)
 {

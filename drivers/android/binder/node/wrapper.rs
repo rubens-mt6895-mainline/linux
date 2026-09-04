@@ -21,7 +21,7 @@ impl CritIncrWrapper {
 
     pub(super) fn init(self, node: DArc<Node>) -> DLArc<dyn DeliverToRead> {
         match self.inner.pin_init_with(DTRWrap::new(NodeWrapper { node })) {
-            Ok(initialized) => ListArc::from(initialized) as DLArc<dyn DeliverToRead>,
+            Ok(initialized) => ListArc::from(initialized) as _,
             Err(err) => match err {},
         }
     }

@@ -377,8 +377,10 @@ static int sprd_mbox_probe(struct platform_device *pdev)
 
 	ret = devm_request_irq(dev, inbox_irq, sprd_mbox_inbox_isr,
 			       IRQF_NO_SUSPEND, dev_name(dev), priv);
-	if (ret)
+	if (ret) {
+		dev_err(dev, "failed to request inbox IRQ: %d\n", ret);
 		return ret;
+	}
 
 	outbox_irq = platform_get_irq_byname(pdev, "outbox");
 	if (outbox_irq < 0)
@@ -386,16 +388,20 @@ static int sprd_mbox_probe(struct platform_device *pdev)
 
 	ret = devm_request_irq(dev, outbox_irq, sprd_mbox_outbox_isr,
 			       IRQF_NO_SUSPEND, dev_name(dev), priv);
-	if (ret)
+	if (ret) {
+		dev_err(dev, "failed to request outbox IRQ: %d\n", ret);
 		return ret;
+	}
 
 	/* Supplementary outbox IRQ is optional */
 	supp_irq = platform_get_irq_byname(pdev, "supp-outbox");
 	if (supp_irq > 0) {
 		ret = devm_request_irq(dev, supp_irq, sprd_mbox_supp_isr,
 				       IRQF_NO_SUSPEND, dev_name(dev), priv);
-		if (ret)
+		if (ret) {
+			dev_err(dev, "failed to request outbox IRQ: %d\n", ret);
 			return ret;
+		}
 
 		if (!priv->info->supp_id) {
 			dev_err(dev, "no supplementary outbox specified\n");

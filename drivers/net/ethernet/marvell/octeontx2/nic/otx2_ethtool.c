@@ -939,8 +939,7 @@ static int otx2_get_rxfh(struct net_device *dev,
 
 	for (idx = 0; idx < rss->rss_size; idx++) {
 		/* Ignore if the rx queue is AF_XDP zero copy enabled */
-		if (pfvf->af_xdp_zc_qidx &&
-		    test_bit(rss->ind_tbl[idx], pfvf->af_xdp_zc_qidx))
+		if (test_bit(rss->ind_tbl[idx], pfvf->af_xdp_zc_qidx))
 			continue;
 		indir[idx] = rss->ind_tbl[idx];
 	}

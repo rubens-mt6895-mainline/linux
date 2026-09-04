@@ -29,34 +29,30 @@ struct map_list {
 
 int read_memory_info(unsigned long *memfree, unsigned long *hugepagesize)
 {
-	char buffer[256];
-	int found = 0;
-	FILE *file;
-	int ret = -1;
+	char  buffer[256] = {0};
+	char *cmd = "cat /proc/meminfo | grep -i memfree | grep -o '[0-9]*'";
+	FILE *cmdfile = popen(cmd, "r");
 
-	file = fopen("/proc/meminfo", "r");
-	if (!file) {
-		ksft_print_msg("Failed to open /proc/meminfo: %s\n",
-			       strerror(errno));
+	if (!(fgets(buffer, sizeof(buffer), cmdfile))) {
+		ksft_print_msg("Failed to read meminfo: %s\n", strerror(errno));
 		return -1;
 	}
 
-	while (fgets(buffer, sizeof(buffer), file) && found != 2) {
-		if (sscanf(buffer, "MemFree: %lu kB", memfree) == 1 ||
-		    sscanf(buffer, "Hugepagesize: %lu kB", hugepagesize) == 1)
-			found++;
+	pclose(cmdfile);
+
+	*memfree = atoll(buffer);
+	cmd = "cat /proc/meminfo | grep -i hugepagesize | grep -o '[0-9]*'";
+	cmdfile = popen(cmd, "r");
+
+	if (!(fgets(buffer, sizeof(buffer), cmdfile))) {
+		ksft_print_msg("Failed to read meminfo: %s\n", strerror(errno));
+		return -1;
 	}
 
-	if (ferror(file))
-		ksft_print_msg("Failed to read /proc/meminfo: %s\n",
-			       strerror(errno));
-	else if (found != 2)
-		ksft_print_msg("Failed to parse /proc/meminfo\n");
-	else
-		ret = 0;
+	pclose(cmdfile);
+	*hugepagesize = atoll(buffer);
 
-	fclose(file);
-	return ret;
+	return 0;
 }
 
 int prereq(void)

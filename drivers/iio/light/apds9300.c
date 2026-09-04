@@ -432,8 +432,10 @@ static int apds9300_probe(struct i2c_client *client)
 				NULL, apds9300_interrupt_handler,
 				IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
 				"apds9300_event", indio_dev);
-		if (ret)
+		if (ret) {
+			dev_err(&client->dev, "irq request error %d\n", -ret);
 			goto err;
+		}
 	}
 
 	ret = iio_device_register(indio_dev);

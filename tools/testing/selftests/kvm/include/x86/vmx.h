@@ -290,23 +290,6 @@ struct vmx_msr_entry {
 	u64 value;
 } __attribute__ ((aligned(16)));
 
-#define VMX_SWITCH_GPRS_ASM \
-	GUEST_SWITCH_GPR_ASM(rax) \
-	GUEST_SWITCH_GPR_ASM(rbx) \
-	GUEST_SWITCH_GPR_ASM(rcx) \
-	GUEST_SWITCH_GPR_ASM(rdx) \
-	GUEST_SWITCH_GPR_ASM(rbp) \
-	GUEST_SWITCH_GPR_ASM(rsi) \
-	GUEST_SWITCH_GPR_ASM(rdi) \
-	GUEST_SWITCH_GPR_ASM(r8)  \
-	GUEST_SWITCH_GPR_ASM(r9)  \
-	GUEST_SWITCH_GPR_ASM(r10) \
-	GUEST_SWITCH_GPR_ASM(r11) \
-	GUEST_SWITCH_GPR_ASM(r12) \
-	GUEST_SWITCH_GPR_ASM(r13) \
-	GUEST_SWITCH_GPR_ASM(r14) \
-	GUEST_SWITCH_GPR_ASM(r15)
-
 #include "evmcs.h"
 
 static inline int vmxon(u64 phys)
@@ -380,6 +363,9 @@ static inline u64 vmptrstz(void)
 	return value;
 }
 
+/*
+ * No guest state (e.g. GPRs) is established by this vmlaunch.
+ */
 static inline int vmlaunch(void)
 {
 	int ret;
@@ -387,24 +373,34 @@ static inline int vmlaunch(void)
 	if (enable_evmcs)
 		return evmcs_vmlaunch();
 
-	__asm__ __volatile__("push $0;"
+	__asm__ __volatile__("push %%rbp;"
+			     "push %%rcx;"
+			     "push %%rdx;"
+			     "push %%rsi;"
+			     "push %%rdi;"
+			     "push $0;"
 			     "vmwrite %%rsp, %[host_rsp];"
 			     "lea 1f(%%rip), %%rax;"
 			     "vmwrite %%rax, %[host_rip];"
-			     VMX_SWITCH_GPRS_ASM
 			     "vmlaunch;"
 			     "incq (%%rsp);"
-			     "1: ;"
-			     VMX_SWITCH_GPRS_ASM
-			     "pop %%rax;"
+			     "1: pop %%rax;"
+			     "pop %%rdi;"
+			     "pop %%rsi;"
+			     "pop %%rdx;"
+			     "pop %%rcx;"
+			     "pop %%rbp;"
 			     : [ret]"=&a"(ret)
 			     : [host_rsp]"r"((u64)HOST_RSP),
-			       [host_rip]"r"((u64)HOST_RIP),
-			       GUEST_REGS_OFFSETS
-			     : "memory", "cc");
+			       [host_rip]"r"((u64)HOST_RIP)
+			     : "memory", "cc", "rbx", "r8", "r9", "r10",
+			       "r11", "r12", "r13", "r14", "r15");
 	return ret;
 }
 
+/*
+ * No guest state (e.g. GPRs) is established by this vmresume.
+ */
 static inline int vmresume(void)
 {
 	int ret;
@@ -412,21 +408,28 @@ static inline int vmresume(void)
 	if (enable_evmcs)
 		return evmcs_vmresume();
 
-	__asm__ __volatile__("push $0;"
+	__asm__ __volatile__("push %%rbp;"
+			     "push %%rcx;"
+			     "push %%rdx;"
+			     "push %%rsi;"
+			     "push %%rdi;"
+			     "push $0;"
 			     "vmwrite %%rsp, %[host_rsp];"
 			     "lea 1f(%%rip), %%rax;"
 			     "vmwrite %%rax, %[host_rip];"
-			     VMX_SWITCH_GPRS_ASM
 			     "vmresume;"
 			     "incq (%%rsp);"
-			     "1: ;"
-			     VMX_SWITCH_GPRS_ASM
-			     "pop %%rax;"
+			     "1: pop %%rax;"
+			     "pop %%rdi;"
+			     "pop %%rsi;"
+			     "pop %%rdx;"
+			     "pop %%rcx;"
+			     "pop %%rbp;"
 			     : [ret]"=&a"(ret)
 			     : [host_rsp]"r"((u64)HOST_RSP),
-			       [host_rip]"r"((u64)HOST_RIP),
-			       GUEST_REGS_OFFSETS
-			     : "memory", "cc");
+			       [host_rip]"r"((u64)HOST_RIP)
+			     : "memory", "cc", "rbx", "r8", "r9", "r10",
+			       "r11", "r12", "r13", "r14", "r15");
 	return ret;
 }
 
@@ -521,8 +524,6 @@ struct vmx_pages {
 	u64 apic_access_gpa;
 	void *apic_access;
 
-	void *stack;
-
 	u64 eptp_gpa;
 };
 
@@ -551,7 +552,7 @@ union vmx_ctrl_msr {
 
 struct vmx_pages *vcpu_alloc_vmx(struct kvm_vm *vm, gva_t *p_vmx_gva);
 bool prepare_for_vmx_operation(struct vmx_pages *vmx);
-void prepare_vmcs(struct vmx_pages *vmx, void *guest_rip);
+void prepare_vmcs(struct vmx_pages *vmx, void *guest_rip, void *guest_rsp);
 bool load_vmcs(struct vmx_pages *vmx);
 
 bool ept_1g_pages_supported(void);

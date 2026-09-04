@@ -800,8 +800,11 @@ static int rn5t618_power_probe(struct platform_device *pdev)
 						"rn5t618_power",
 						&pdev->dev);
 
-		if (ret < 0)
+		if (ret < 0) {
+			dev_err(&pdev->dev, "request IRQ:%d fail\n",
+				info->irq);
 			info->irq = -1;
+		}
 	}
 
 	return 0;
@@ -818,4 +821,3 @@ module_platform_driver(rn5t618_power_driver);
 MODULE_ALIAS("platform:rn5t618-power");
 MODULE_DESCRIPTION("Power supply driver for RICOH RN5T618");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS("IIO_CONSUMER");

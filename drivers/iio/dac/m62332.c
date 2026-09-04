@@ -32,7 +32,6 @@ static int m62332_set_value(struct iio_dev *indio_dev, u8 val, int channel)
 {
 	struct m62332_data *data = iio_priv(indio_dev);
 	struct i2c_client *client = data->client;
-	bool enabling, disabling;
 	u8 outbuf[2];
 	int res;
 
@@ -44,10 +43,7 @@ static int m62332_set_value(struct iio_dev *indio_dev, u8 val, int channel)
 
 	mutex_lock(&data->mutex);
 
-	enabling = val && !data->raw[channel];
-	disabling = !val && data->raw[channel];
-
-	if (enabling) {
+	if (val) {
 		res = regulator_enable(data->vcc);
 		if (res)
 			goto out;
@@ -56,16 +52,13 @@ static int m62332_set_value(struct iio_dev *indio_dev, u8 val, int channel)
 	res = i2c_master_send(client, outbuf, ARRAY_SIZE(outbuf));
 	if (res >= 0 && res != ARRAY_SIZE(outbuf))
 		res = -EIO;
-	if (res < 0) {
-		if (enabling)
-			regulator_disable(data->vcc);
+	if (res < 0)
 		goto out;
-	}
-
-	if (disabling)
-		regulator_disable(data->vcc);
 
 	data->raw[channel] = val;
+
+	if (!val)
+		regulator_disable(data->vcc);
 
 	mutex_unlock(&data->mutex);
 

@@ -575,7 +575,7 @@ static const struct rescale_tc_data offset_cases[] = {
 
 static void case_to_desc(const struct rescale_tc_data *t, char *desc)
 {
-	strscpy(desc, t->name, KUNIT_PARAM_DESC_SIZE);
+	strcpy(desc, t->name);
 }
 
 KUNIT_ARRAY_PARAM(iio_rescale_scale, scale_cases, case_to_desc);

@@ -164,6 +164,11 @@ void __init page_ext_init_flatmem_late(void)
 	invoke_init_callbacks();
 }
 
+void __meminit pgdat_page_ext_init(struct pglist_data *pgdat)
+{
+	pgdat->node_page_ext = NULL;
+}
+
 static struct page_ext *lookup_page_ext(const struct page *page)
 {
 	unsigned long pfn = page_to_pfn(page);
@@ -487,6 +492,10 @@ void __init page_ext_init(void)
 
 oom:
 	panic("Out of memory");
+}
+
+void __meminit pgdat_page_ext_init(struct pglist_data *pgdat)
+{
 }
 
 #endif

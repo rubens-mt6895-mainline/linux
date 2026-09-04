@@ -8,21 +8,16 @@ title: Qualcomm Global Clock & Reset Controller on Hawi
 
 maintainers:
   - Vivek Aknurwar <vivek.aknurwar@oss.qualcomm.com>
-  - Taniya Das <taniya.das@oss.qualcomm.com>
 
 description: |
   Qualcomm global clock control module provides the clocks, resets and power
-  domains on Hawi and Maili.
+  domains on Hawi.
 
-  See also:
-    include/dt-bindings/clock/qcom,hawi-gcc.h
-    include/dt-bindings/clock/qcom,maili-gcc.h
+  See also: include/dt-bindings/clock/qcom,hawi-gcc.h
 
 properties:
   compatible:
-    enum:
-      - qcom,hawi-gcc
-      - qcom,maili-gcc
+    const: qcom,hawi-gcc
 
   clocks:
     items:

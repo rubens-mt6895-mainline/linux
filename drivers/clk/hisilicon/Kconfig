@@ -1,13 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
-config COMMON_CLK_HISI
-	bool
-	default ARCH_HISI
-
 config COMMON_CLK_HI3516CV300
 	tristate "HI3516CV300 Clock Driver"
 	depends on ARCH_HISI || COMPILE_TEST
 	select RESET_HISI
-	select COMMON_CLK_HISI
 	default ARCH_HISI
 	help
 	  Build the clock driver for hi3516cv300.
@@ -16,7 +11,6 @@ config COMMON_CLK_HI3519
 	tristate "Hi3519 Clock Driver"
 	depends on ARCH_HISI || COMPILE_TEST
 	select RESET_HISI
-	select COMMON_CLK_HISI
 	default ARCH_HISI
 	help
 	  Build the clock driver for hi3519.
@@ -25,7 +19,6 @@ config COMMON_CLK_HI3559A
 	bool "Hi3559A Clock Driver"
 	depends on ARCH_HISI || COMPILE_TEST
 	select RESET_HISI
-	select COMMON_CLK_HISI
 	default ARCH_HISI
 	help
 	  Build the clock driver for hi3559a.
@@ -33,7 +26,6 @@ config COMMON_CLK_HI3559A
 config COMMON_CLK_HI3660
 	bool "Hi3660 Clock Driver"
 	depends on ARCH_HISI || COMPILE_TEST
-	select COMMON_CLK_HISI
 	default ARCH_HISI
 	help
 	  Build the clock driver for hi3660.
@@ -41,7 +33,6 @@ config COMMON_CLK_HI3660
 config COMMON_CLK_HI3670
 	bool "Hi3670 Clock Driver"
 	depends on ARCH_HISI || COMPILE_TEST
-	select COMMON_CLK_HISI
 	default ARCH_HISI
 	help
 	  Build the clock driver for hi3670.
@@ -50,7 +41,6 @@ config COMMON_CLK_HI3798CV200
 	tristate "Hi3798CV200 Clock Driver"
 	depends on ARCH_HISI || COMPILE_TEST
 	select RESET_HISI
-	select COMMON_CLK_HISI
 	default ARCH_HISI
 	help
 	  Build the clock driver for hi3798cv200.
@@ -58,7 +48,6 @@ config COMMON_CLK_HI3798CV200
 config COMMON_CLK_HI6220
 	bool "Hi6220 Clock Driver"
 	depends on ARCH_HISI || COMPILE_TEST
-	select COMMON_CLK_HISI
 	default ARCH_HISI
 	help
 	  Build the Hisilicon Hi6220 clock driver based on the common clock framework.
@@ -66,7 +55,6 @@ config COMMON_CLK_HI6220
 config RESET_HISI
 	bool "HiSilicon Reset Controller Driver"
 	depends on ARCH_HISI || COMPILE_TEST
-	select COMMON_CLK_HISI
 	select RESET_CONTROLLER
 	help
 	  Build reset controller driver for HiSilicon device chipsets.
@@ -75,7 +63,6 @@ config STUB_CLK_HI6220
 	bool "Hi6220 Stub Clock Driver" if EXPERT
 	depends on (COMMON_CLK_HI6220 || COMPILE_TEST)
 	depends on MAILBOX
-	select COMMON_CLK_HISI
 	default COMMON_CLK_HI6220
 	help
 	  Build the Hisilicon Hi6220 stub clock driver.
@@ -84,7 +71,6 @@ config STUB_CLK_HI3660
 	bool "Hi3660 Stub Clock Driver" if EXPERT
 	depends on (COMMON_CLK_HI3660 || COMPILE_TEST)
 	depends on MAILBOX
-	select COMMON_CLK_HISI
 	default COMMON_CLK_HI3660
 	help
 	  Build the Hisilicon Hi3660 stub clock driver.

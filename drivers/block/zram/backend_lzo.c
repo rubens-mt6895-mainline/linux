@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#define pr_fmt(fmt) "lzo: " fmt
-
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/lzo.h>
@@ -14,14 +12,6 @@ static void lzo_release_params(struct zcomp_params *params)
 
 static int lzo_setup_params(struct zcomp_params *params)
 {
-	if (params->dict_sz) {
-		pr_err("dictionary is not supported\n");
-		return -EOPNOTSUPP;
-	}
-	if (params->level != ZCOMP_PARAM_NOT_SET) {
-		pr_err("compression level is not supported\n");
-		return -EOPNOTSUPP;
-	}
 	return 0;
 }
 

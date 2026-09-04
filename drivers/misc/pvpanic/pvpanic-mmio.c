@@ -51,14 +51,14 @@ static int pvpanic_mmio_probe(struct platform_device *pdev)
 }
 
 static const struct of_device_id pvpanic_mmio_match[] = {
-	{ .compatible = "qemu,pvpanic-mmio" },
-	{ }
+	{ .compatible = "qemu,pvpanic-mmio", },
+	{}
 };
 MODULE_DEVICE_TABLE(of, pvpanic_mmio_match);
 
 static const struct acpi_device_id pvpanic_device_ids[] = {
-	{ .id = "QEMU0001" },
-	{ }
+	{ "QEMU0001", 0 },
+	{ "", 0 }
 };
 MODULE_DEVICE_TABLE(acpi, pvpanic_device_ids);
 

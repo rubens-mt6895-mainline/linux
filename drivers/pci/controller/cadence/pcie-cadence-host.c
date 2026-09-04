@@ -365,7 +365,6 @@ void cdns_pcie_host_disable(struct cdns_pcie_rc *rc)
 {
 	struct pci_host_bridge *bridge;
 
-	cdns_pcie_debugfs_deinit(&rc->pcie);
 	bridge = pci_host_bridge_from_priv(rc);
 	pci_lock_rescan_remove();
 	pci_stop_root_bus(bridge->bus);
@@ -430,13 +429,7 @@ int cdns_pcie_host_setup(struct cdns_pcie_rc *rc)
 	if (!bridge->ops)
 		bridge->ops = &cdns_pcie_host_ops;
 
-	ret = pci_host_probe(bridge);
-	if (ret)
-		return ret;
-
-	cdns_pcie_debugfs_init(pcie);
-
-	return 0;
+	return pci_host_probe(bridge);
 }
 EXPORT_SYMBOL_GPL(cdns_pcie_host_setup);
 

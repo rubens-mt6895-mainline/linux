@@ -261,7 +261,6 @@ struct nfs_client *nfs4_alloc_client(const struct nfs_client_initdata *cl_init)
 	return clp;
 
 error:
-	nfs_cb_idr_remove(clp);
 	nfs_free_client(clp);
 	return ERR_PTR(err);
 }
@@ -792,7 +791,7 @@ static int nfs4_set_client(struct nfs_server *server,
 struct nfs_client *nfs4_set_ds_client(struct nfs_server *mds_srv,
 		const struct sockaddr_storage *ds_addr, int ds_addrlen,
 		int ds_proto, unsigned int ds_timeo, unsigned int ds_retrans,
-		u32 minor_version, bool tightly_coupled)
+		u32 minor_version)
 {
 	struct rpc_timeout ds_timeout;
 	struct nfs_client *mds_clp = mds_srv->nfs_client;
@@ -839,8 +838,7 @@ struct nfs_client *nfs4_set_ds_client(struct nfs_server *mds_srv,
 	if (test_bit(NFS_CS_NETUNREACH_FATAL, &mds_clp->cl_flags))
 		__set_bit(NFS_CS_NETUNREACH_FATAL, &cl_init.init_flags);
 
-	if (tightly_coupled)
-		__set_bit(NFS_CS_PNFS, &cl_init.init_flags);
+	__set_bit(NFS_CS_PNFS, &cl_init.init_flags);
 	cl_init.max_connect = NFS_MAX_TRANSPORTS;
 	/*
 	 * Set an authflavor equual to the MDS value. Use the MDS nfs_client
@@ -917,22 +915,20 @@ static int nfs4_server_common_setup(struct nfs_server *server,
 		return error;
 
 	/* data servers support only a subset of NFSv4.1 */
-	if (is_ds_only_client(server->nfs_client)) {
-		error = -EPROTONOSUPPORT;
-		goto out_free_delegation_hash;
-	}
+	if (is_ds_only_client(server->nfs_client))
+		return -EPROTONOSUPPORT;
 
 	/* We must ensure the session is initialised first */
 	error = nfs4_init_session(server->nfs_client);
 	if (error < 0)
-		goto out_free_delegation_hash;
+		return error;
 
 	nfs_server_set_init_caps(server);
 
 	/* Probe the root fh to retrieve its FSID and filehandle */
 	error = nfs4_get_rootfh(server, mntfh, auth_probe);
 	if (error < 0)
-		goto out_free_delegation_hash;
+		return error;
 
 	dprintk("Server FSID: %llx:%llx\n",
 			(unsigned long long) server->fsid.major,
@@ -941,7 +937,7 @@ static int nfs4_server_common_setup(struct nfs_server *server,
 
 	error = nfs_probe_server(server, mntfh);
 	if (error < 0)
-		goto out_free_delegation_hash;
+		return error;
 
 	nfs4_session_limit_rwsize(server);
 	nfs4_session_limit_xasize(server);
@@ -953,11 +949,6 @@ static int nfs4_server_common_setup(struct nfs_server *server,
 	server->mount_time = jiffies;
 	server->destroy = nfs4_destroy_server;
 	return 0;
-
-out_free_delegation_hash:
-	kfree(server->delegation_hash_table);
-	server->delegation_hash_table = NULL;
-	return error;
 }
 
 /*

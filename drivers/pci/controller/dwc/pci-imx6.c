@@ -121,7 +121,6 @@ enum imx_pcie_variants {
 #define IMX_PCIE_FLAG_SKIP_L23_READY		BIT(12)
 /* Preserve MSI capability for platforms that require it */
 #define IMX_PCIE_FLAG_KEEP_MSI_CAP		BIT(13)
-#define IMX_PCIE_FLAG_PM_RUNTIME		BIT(14)
 
 #define imx_check_flag(pci, val)	(pci->drvdata->flags & val)
 
@@ -1322,18 +1321,6 @@ static void imx_pcie_assert_perst(struct imx_pcie *imx_pcie, bool assert)
 	}
 }
 
-static bool imx_pcie_perst_found(struct pci_host_bridge *bridge)
-{
-	struct pci_host_port *port;
-
-	list_for_each_entry(port, &bridge->ports, list) {
-		if (!list_empty(&port->perst))
-			return true;
-	}
-
-	return false;
-}
-
 static int imx_pcie_host_init(struct dw_pcie_rp *pp)
 {
 	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
@@ -1346,12 +1333,15 @@ static int imx_pcie_host_init(struct dw_pcie_rp *pp)
 		/* Parse Root Port nodes if present */
 		ret = pci_host_common_parse_ports(dev, bridge);
 		if (ret) {
-			dev_err(dev, "Failed to parse Root Port nodes: %d\n", ret);
-			return ret;
-		}
+			if (ret != -ENODEV) {
+				dev_err(dev, "Failed to parse Root Port nodes: %d\n", ret);
+				return ret;
+			}
 
-		/* Fall back to legacy binding for DT backwards compatibility */
-		if (!imx_pcie_perst_found(bridge)) {
+			/*
+			 * Fall back to legacy binding for DT backwards
+			 * compatibility
+			 */
 			ret = imx_pcie_parse_legacy_binding(imx_pcie);
 			if (ret)
 				return ret;
@@ -1386,12 +1376,16 @@ static int imx_pcie_host_init(struct dw_pcie_rp *pp)
 		}
 	}
 
-	if (!pp->skip_pwrctrl_off) {
-		ret = pci_pwrctrl_power_on_devices(dev);
-		if (ret) {
-			dev_err(dev, "failed to power on pwrctrl devices\n");
-			goto err_reg_disable;
-		}
+	ret = pci_pwrctrl_create_devices(dev);
+	if (ret) {
+		dev_err(dev, "failed to create pwrctrl devices\n");
+		goto err_reg_disable;
+	}
+
+	ret = pci_pwrctrl_power_on_devices(dev);
+	if (ret) {
+		dev_err(dev, "failed to power on pwrctrl devices\n");
+		goto err_pwrctrl_destroy;
 	}
 
 	ret = imx_pcie_clk_enable(imx_pcie);
@@ -1461,8 +1455,10 @@ err_phy_exit:
 err_clk_disable:
 	imx_pcie_clk_disable(imx_pcie);
 err_pwrctrl_power_off:
-	if (!pp->skip_pwrctrl_off)
-		pci_pwrctrl_power_off_devices(dev);
+	pci_pwrctrl_power_off_devices(dev);
+err_pwrctrl_destroy:
+	if (ret != -EPROBE_DEFER)
+		pci_pwrctrl_destroy_devices(dev);
 err_reg_disable:
 	if (imx_pcie->vpcie)
 		regulator_disable(imx_pcie->vpcie);
@@ -1482,8 +1478,7 @@ static void imx_pcie_host_exit(struct dw_pcie_rp *pp)
 	}
 	imx_pcie_clk_disable(imx_pcie);
 
-	if (!pci->pp.skip_pwrctrl_off)
-		pci_pwrctrl_power_off_devices(pci->dev);
+	pci_pwrctrl_power_off_devices(pci->dev);
 	if (imx_pcie->vpcie)
 		regulator_disable(imx_pcie->vpcie);
 }
@@ -1955,15 +1950,11 @@ static int imx_pcie_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	ret = pci_pwrctrl_create_devices(dev);
-	if (ret)
-		return dev_err_probe(dev, ret, "failed to create pwrctrl devices\n");
-
 	pci->use_parent_dt_ranges = true;
 	if (imx_pcie->drvdata->mode == DW_PCIE_EP_TYPE) {
 		ret = imx_add_pcie_ep(imx_pcie, pdev);
 		if (ret < 0)
-			goto err_pwrctrl_destroy;
+			return ret;
 
 		/*
 		 * FIXME: Only single Device (EPF) is supported due to the
@@ -1971,13 +1962,6 @@ static int imx_pcie_probe(struct platform_device *pdev)
 		 */
 		imx_pcie_add_lut_by_rid(imx_pcie, 0);
 	} else {
-		if (imx_pcie->drvdata->flags & IMX_PCIE_FLAG_PM_RUNTIME) {
-			pm_runtime_no_callbacks(dev);
-			ret = devm_pm_runtime_set_active_enabled(dev);
-			if (ret < 0)
-				return ret;
-		}
-
 		if (imx_check_flag(imx_pcie, IMX_PCIE_FLAG_SKIP_L23_READY))
 			pci->pp.skip_l23_ready = true;
 		if (imx_check_flag(imx_pcie, IMX_PCIE_FLAG_KEEP_MSI_CAP))
@@ -1985,7 +1969,7 @@ static int imx_pcie_probe(struct platform_device *pdev)
 		pci->pp.use_atu_msg = true;
 		ret = dw_pcie_host_init(&pci->pp);
 		if (ret < 0)
-			goto err_pwrctrl_destroy;
+			return ret;
 
 		if (pci_msi_enabled()) {
 			u8 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_MSI);
@@ -1997,11 +1981,6 @@ static int imx_pcie_probe(struct platform_device *pdev)
 	}
 
 	return 0;
-
-err_pwrctrl_destroy:
-	if (ret != -EPROBE_DEFER)
-		pci_pwrctrl_destroy_devices(dev);
-	return ret;
 }
 
 static void imx_pcie_shutdown(struct platform_device *pdev)
@@ -2129,7 +2108,6 @@ static const struct imx_pcie_drvdata drvdata[] = {
 		.flags = IMX_PCIE_FLAG_HAS_SERDES |
 			 IMX_PCIE_FLAG_HAS_LUT |
 			 IMX_PCIE_FLAG_8GT_ECN_ERR051586 |
-			 IMX_PCIE_FLAG_PM_RUNTIME |
 			 IMX_PCIE_FLAG_SUPPORTS_SUSPEND,
 		.ltssm_off = IMX95_PE0_GEN_CTRL_3,
 		.ltssm_mask = IMX95_PCIE_LTSSM_EN,

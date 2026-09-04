@@ -24,8 +24,6 @@
 		mmc0 = &mmc0;
 		mmc1 = &mmc1;
 		serial0 = &uart0;
-		serial1 = &uart1;
-		serial2 = &uart2;
 	};
 
 	chosen {

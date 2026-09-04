@@ -147,12 +147,10 @@ void __set_huge_pte_at(struct mm_struct *mm, unsigned long addr,
 		if (likely(pte_present(pte)))
 			rste |= _REGION3_ENTRY_LARGE;
 		rste |= _REGION_ENTRY_TYPE_R3;
-		set_pud((pud_t *)ptep, __pud(rste));
-	} else {
-		if (likely(pte_present(pte)))
-			rste |= _SEGMENT_ENTRY_LARGE;
-		set_pmd((pmd_t *)ptep, __pmd(rste));
-	}
+	} else if (likely(pte_present(pte)))
+		rste |= _SEGMENT_ENTRY_LARGE;
+
+	set_pte(ptep, __pte(rste));
 }
 
 void set_huge_pte_at(struct mm_struct *mm, unsigned long addr,

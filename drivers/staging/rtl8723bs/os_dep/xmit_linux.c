@@ -7,7 +7,7 @@
 #include <drv_types.h>
 
 
-unsigned int rtw_remainder_len(struct pkt_file *pfile)
+uint rtw_remainder_len(struct pkt_file *pfile)
 {
 	return (pfile->buf_len - ((SIZE_PTR)(pfile->cur_addr) - (SIZE_PTR)(pfile->buf_start)));
 }
@@ -15,10 +15,8 @@ unsigned int rtw_remainder_len(struct pkt_file *pfile)
 void _rtw_open_pktfile(struct sk_buff *pktptr, struct pkt_file *pfile)
 {
 	pfile->pkt = pktptr;
-	pfile->buf_start = pktptr->data;
-	pfile->cur_addr = pktptr->data;
-	pfile->buf_len = pktptr->len;
-	pfile->pkt_len = pktptr->len;
+	pfile->cur_addr = pfile->buf_start = pktptr->data;
+	pfile->pkt_len = pfile->buf_len = pktptr->len;
 
 	pfile->cur_buffer = pfile->buf_start;
 }
@@ -50,9 +48,7 @@ signed int rtw_endofpktfile(struct pkt_file *pfile)
 	return false;
 }
 
-void rtw_os_xmit_resource_free(struct adapter *padapter,
-			       struct xmit_buf *pxmitbuf,
-			       u32 free_sz, u8 flag)
+void rtw_os_xmit_resource_free(struct adapter *padapter, struct xmit_buf *pxmitbuf, u32 free_sz, u8 flag)
 {
 	if (free_sz > 0)
 		kfree(pxmitbuf->pallocated_buf);

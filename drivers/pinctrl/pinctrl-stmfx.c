@@ -727,8 +727,10 @@ static int stmfx_pinctrl_probe(struct platform_device *pdev)
 					stmfx_pinctrl_irq_thread_fn,
 					IRQF_ONESHOT,
 					dev_name(pctl->dev), pctl);
-	if (ret)
+	if (ret) {
+		dev_err(pctl->dev, "cannot request irq%d\n", irq);
 		return ret;
+	}
 
 	dev_info(pctl->dev,
 		 "%ld GPIOs available\n", hweight_long(pctl->gpio_valid_mask));

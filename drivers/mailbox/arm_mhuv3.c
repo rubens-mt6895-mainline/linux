@@ -982,7 +982,8 @@ static int mhuv3_setup_pbx(struct mhuv3 *mhu)
 						mhuv3_pbx_comb_interrupt,
 						IRQF_ONESHOT, "mhuv3-pbx", mhu);
 		if (ret)
-			return ret;
+			return dev_err_probe(dev, ret,
+					     "Failed to request PBX IRQ\n");
 
 		mhu->mbox.txdone_irq = true;
 		mhu->mbox.txdone_poll = false;
@@ -1019,7 +1020,7 @@ static int mhuv3_setup_mbx(struct mhuv3 *mhu)
 					mhuv3_mbx_comb_interrupt, IRQF_ONESHOT,
 					"mhuv3-mbx", mhu);
 	if (ret)
-		return ret;
+		return dev_err_probe(dev, ret, "Failed to request MBX IRQ\n");
 
 	for (i = 0; i < NUM_EXT; i++)
 		if (mhu->ext[i])

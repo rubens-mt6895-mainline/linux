@@ -563,9 +563,7 @@ const struct cpumask *of_irq_get_affinity(struct device_node *dev, int index)
 	of_phandle_args_to_fwspec(oirq.np, oirq.args, oirq.args_count,
 				  &fwspec);
 
-	rc = irq_populate_fwspec_info(&fwspec, &info);
-	of_node_put(oirq.np);
-	if (rc)
+	if (irq_populate_fwspec_info(&fwspec, &info))
 		return NULL;
 
 	return info.affinity;

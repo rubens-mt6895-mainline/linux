@@ -15,14 +15,6 @@ struct adr_remap {
 	u64 remapped_adr;
 };
 
-static const struct adr_remap global_ghost_adr[] = {
-	{
-		0x000000D010010500ull,
-		0x0000000000000000ull
-	},
-	{}
-};
-
 /*
  * Some TigerLake devices based on an initial Intel BIOS do not expose
  * the correct _ADR in the DSDT.
@@ -189,28 +181,7 @@ static const struct dmi_system_id adr_remap_quirk_table[] = {
 	{
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "ASUS"),
-			DMI_MATCH(DMI_BOARD_NAME, "B9406CAA"),
-		},
-		.driver_data = (void *)ghost_realtek,
-	},
-	{
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUS"),
-			DMI_MATCH(DMI_BOARD_NAME, "GX651AR"),
-		},
-		.driver_data = (void *)ghost_realtek,
-	},
-	{
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUS"),
 			DMI_MATCH(DMI_BOARD_NAME, "UX5406AA"),
-		},
-		.driver_data = (void *)ghost_realtek,
-	},
-	{
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "ASUS"),
-			DMI_MATCH(DMI_BOARD_NAME, "UX8407AA"),
 		},
 		.driver_data = (void *)ghost_realtek,
 	},
@@ -234,7 +205,6 @@ static const struct dmi_system_id adr_remap_quirk_table[] = {
 u64 sdw_dmi_override_adr(struct sdw_bus *bus, u64 addr)
 {
 	const struct dmi_system_id *dmi_id;
-	int i;
 
 	/* check if any address remap quirk applies */
 	dmi_id = dmi_first_match(adr_remap_quirk_table);
@@ -246,20 +216,10 @@ u64 sdw_dmi_override_adr(struct sdw_bus *bus, u64 addr)
 				dev_dbg(bus->dev, "remapped _ADR 0x%llx as 0x%llx\n",
 					addr, map->remapped_adr);
 				addr = map->remapped_adr;
-				goto out;
+				break;
 			}
 		}
 	}
 
-	/* remap the ghost ADRs */
-	for (i = 0; i < ARRAY_SIZE(global_ghost_adr); i++) {
-		if (global_ghost_adr[i].adr == addr) {
-			dev_dbg(bus->dev, "remapped _ADR 0x%llx as 0x%llx\n",
-				addr, global_ghost_adr[i].remapped_adr);
-			addr = global_ghost_adr[i].remapped_adr;
-			break;
-		}
-	}
-out:
 	return addr;
 }

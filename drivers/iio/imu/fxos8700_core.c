@@ -2,7 +2,7 @@
 /*
  * FXOS8700 - NXP IMU (accelerometer plus magnetometer)
  *
- * IIO core driver for FXOS8700, with support for I2C/SPI buses
+ * IIO core driver for FXOS8700, with support for I2C/SPI busses
  *
  * TODO: Buffer, trigger, and IRQ support
  */

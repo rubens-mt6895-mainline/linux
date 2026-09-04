@@ -25,7 +25,6 @@
 #include <linux/mutex.h>
 #include <linux/mfd/ucb1x00.h>
 #include <linux/pm.h>
-#include <linux/property.h>
 #include <linux/gpio/driver.h>
 
 static DEFINE_MUTEX(ucb1x00_mutex);
@@ -493,11 +492,6 @@ static struct class ucb1x00_class = {
 	.dev_release	= ucb1x00_release,
 };
 
-const struct software_node ucb1x00_gpiochip_node = {
-	.name = "ucb1x00-gpio",
-};
-EXPORT_SYMBOL_GPL(ucb1x00_gpiochip_node);
-
 static int ucb1x00_probe(struct mcp *mcp)
 {
 	struct ucb1x00_plat_data *pdata = mcp->attached_device.platform_data;
@@ -535,10 +529,6 @@ static int ucb1x00_probe(struct mcp *mcp)
 
 	ucb->id  = id;
 	ucb->mcp = mcp;
-
-	ret = device_add_software_node(&ucb->dev, &ucb1x00_gpiochip_node);
-	if (ret)
-		goto err_swnode_add;
 
 	ret = device_add(&ucb->dev);
 	if (ret)
@@ -614,8 +604,6 @@ static int ucb1x00_probe(struct mcp *mcp)
  err_no_irq:
 	device_del(&ucb->dev);
  err_dev_add:
-	device_remove_software_node(&ucb->dev);
- err_swnode_add:
 	put_device(&ucb->dev);
  out:
 	if (pdata && pdata->reset)
@@ -642,9 +630,7 @@ static void ucb1x00_remove(struct mcp *mcp)
 
 	irq_set_chained_handler(ucb->irq, NULL);
 	irq_free_descs(ucb->irq_base, 16);
-	device_del(&ucb->dev);
-	device_remove_software_node(&ucb->dev);
-	put_device(&ucb->dev);
+	device_unregister(&ucb->dev);
 
 	if (pdata && pdata->reset)
 		pdata->reset(UCB_RST_REMOVE);

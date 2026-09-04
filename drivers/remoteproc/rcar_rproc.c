@@ -19,6 +19,35 @@ struct rcar_rproc {
 	struct reset_control *rst;
 };
 
+static int rcar_rproc_mem_alloc(struct rproc *rproc,
+				 struct rproc_mem_entry *mem)
+{
+	struct device *dev = &rproc->dev;
+	void *va;
+
+	dev_dbg(dev, "map memory: %pa+%zx\n", &mem->dma, mem->len);
+	va = ioremap_wc(mem->dma, mem->len);
+	if (!va) {
+		dev_err(dev, "Unable to map memory region: %pa+%zx\n",
+			&mem->dma, mem->len);
+		return -ENOMEM;
+	}
+
+	/* Update memory entry va */
+	mem->va = va;
+
+	return 0;
+}
+
+static int rcar_rproc_mem_release(struct rproc *rproc,
+				   struct rproc_mem_entry *mem)
+{
+	dev_dbg(&rproc->dev, "unmap memory: %pa\n", &mem->dma);
+	iounmap(mem->va);
+
+	return 0;
+}
+
 static int rcar_rproc_prepare(struct rproc *rproc)
 {
 	struct device *dev = rproc->dev.parent;
@@ -44,8 +73,8 @@ static int rcar_rproc_prepare(struct rproc *rproc)
 		mem = rproc_mem_entry_init(dev, NULL,
 					   res.start,
 					   resource_size(&res), da,
-					   rproc_mem_entry_ioremap_wc,
-					   rproc_mem_entry_iounmap,
+					   rcar_rproc_mem_alloc,
+					   rcar_rproc_mem_release,
 					   res.name);
 
 		if (!mem)
@@ -57,8 +86,12 @@ static int rcar_rproc_prepare(struct rproc *rproc)
 
 static int rcar_rproc_parse_fw(struct rproc *rproc, const struct firmware *fw)
 {
-	rproc_elf_load_rsc_table_optional(rproc, fw, dev_info,
-					  "No resource table in elf\n");
+	int ret;
+
+	ret = rproc_elf_load_rsc_table(rproc, fw);
+	if (ret)
+		dev_info(&rproc->dev, "No resource table in elf\n");
+
 	return 0;
 }
 

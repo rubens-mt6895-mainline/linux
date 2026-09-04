@@ -364,9 +364,9 @@ static void cgbc_remove(struct platform_device *pdev)
 {
 	struct cgbc_device_data *cgbc = platform_get_drvdata(pdev);
 
-	mfd_remove_devices(&pdev->dev);
-
 	cgbc_session_release(cgbc);
+
+	mfd_remove_devices(&pdev->dev);
 }
 
 static struct platform_driver cgbc_driver = {

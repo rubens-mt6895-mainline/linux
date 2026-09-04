@@ -2867,16 +2867,11 @@ static void __exit netvsc_drv_exit(void)
 {
 	unregister_netdevice_notifier(&netvsc_netdev_notifier);
 	vmbus_driver_unregister(&netvsc_drv);
-	netvsc_workqueue_destroy();
 }
 
 static int __init netvsc_drv_init(void)
 {
 	int ret;
-
-	ret = netvsc_workqueue_init();
-	if (ret)
-		return ret;
 
 	if (ring_size < RING_SIZE_MIN) {
 		ring_size = RING_SIZE_MIN;
@@ -2895,7 +2890,6 @@ static int __init netvsc_drv_init(void)
 
 err_vmbus_reg:
 	unregister_netdevice_notifier(&netvsc_netdev_notifier);
-	netvsc_workqueue_destroy();
 	return ret;
 }
 

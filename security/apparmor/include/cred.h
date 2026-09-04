@@ -177,14 +177,12 @@ static inline void __end_current_label_crit_section(struct aa_label *label,
 /**
  * end_current_label_crit_section - put a reference found with begin_current_label..
  * @label: label reference to put
- * @needput: output: bool set by __begin_current_label_crit_section
  *
  * Should only be used with a reference obtained with
  * begin_current_label_crit_section and never used in situations where the
  * task cred may be updated
  */
-static inline void end_current_label_crit_section(struct aa_label *label,
-						  bool needput)
+static inline void end_current_label_crit_section(struct aa_label *label)
 {
 	if (label != aa_current_raw_label())
 		aa_put_label(label);
@@ -210,22 +208,28 @@ static inline struct aa_label *__begin_current_label_crit_section(bool *needput)
 
 /**
  * begin_current_label_crit_section - current's confining label and update it
- * @needput: store whether the label needs to be put when ending crit section
  *
  * Returns: up to date confining label or the ns unconfined label (NOT NULL)
  *
+ * Not safe to call inside locks
+ *
  * The returned reference must be put with end_current_label_crit_section()
- * This should NOT be used if the task cred could be updated within the
+ * This must NOT be used if the task cred could be updated within the
  * critical section between begin_current_label_crit_section() ..
  * end_current_label_crit_section()
  */
-static inline struct aa_label *begin_current_label_crit_section(bool *needput)
+static inline struct aa_label *begin_current_label_crit_section(void)
 {
 	struct aa_label *label = aa_current_raw_label();
 
-	label = __begin_current_label_crit_section(needput);
-	if (*needput)
-		aa_schedule_stale_label_replacement();
+	might_sleep();
+
+	if (label_is_stale(label)) {
+		label = aa_get_newest_label(label);
+		if (aa_replace_current_label(label) == 0)
+			/* task cred will keep the reference */
+			aa_put_label(label);
+	}
 
 	return label;
 }

@@ -91,10 +91,8 @@ static acpi_status parse_package(struct wwan_sar_context *context, union acpi_ob
 	    item->package.count <= data->total_dev_mode)
 		return AE_ERROR;
 
-	data->device_mode_info = devm_kcalloc(&context->sar_device->dev,
-					      data->total_dev_mode,
-					      sizeof(*data->device_mode_info),
-					      GFP_KERNEL);
+	data->device_mode_info = kmalloc_objs(struct wwan_device_mode_info,
+					      data->total_dev_mode);
 	if (!data->device_mode_info)
 		return AE_ERROR;
 
@@ -255,7 +253,7 @@ static int sar_probe(struct platform_device *device)
 	if (!handle)
 		return -ENODEV;
 
-	context = devm_kzalloc(&device->dev, sizeof(*context), GFP_KERNEL);
+	context = kzalloc_obj(*context);
 	if (!context)
 		return -ENOMEM;
 
@@ -266,7 +264,7 @@ static int sar_probe(struct platform_device *device)
 	result = guid_parse(SAR_DSM_UUID, &context->guid);
 	if (result) {
 		dev_err(&device->dev, "SAR UUID parse error: %d\n", result);
-		return result;
+		goto r_free;
 	}
 
 	for (reg = 0; reg < MAX_REGULATORY; reg++)
@@ -274,29 +272,43 @@ static int sar_probe(struct platform_device *device)
 
 	if (sar_get_device_mode(device) != AE_OK) {
 		dev_err(&device->dev, "Failed to get device mode\n");
-		return -EIO;
+		result = -EIO;
+		goto r_free;
 	}
 
 	result = sysfs_create_group(&device->dev.kobj, &intcsar_group);
 	if (result) {
 		dev_err(&device->dev, "sysfs creation failed\n");
-		return result;
+		goto r_free;
 	}
 
 	if (acpi_install_notify_handler(ACPI_HANDLE(&device->dev), ACPI_DEVICE_NOTIFY,
 					sar_notify, (void *)device) != AE_OK) {
 		dev_err(&device->dev, "Failed acpi_install_notify_handler\n");
-		sysfs_remove_group(&device->dev.kobj, &intcsar_group);
-		return -EIO;
+		result = -EIO;
+		goto r_sys;
 	}
 	return 0;
+
+r_sys:
+	sysfs_remove_group(&device->dev.kobj, &intcsar_group);
+r_free:
+	kfree(context);
+	return result;
 }
 
 static void sar_remove(struct platform_device *device)
 {
+	struct wwan_sar_context *context = dev_get_drvdata(&device->dev);
+	int reg;
+
 	acpi_remove_notify_handler(ACPI_HANDLE(&device->dev),
 				   ACPI_DEVICE_NOTIFY, sar_notify);
 	sysfs_remove_group(&device->dev.kobj, &intcsar_group);
+	for (reg = 0; reg < MAX_REGULATORY; reg++)
+		kfree(context->config_data[reg].device_mode_info);
+
+	kfree(context);
 }
 
 static struct platform_driver sar_driver = {

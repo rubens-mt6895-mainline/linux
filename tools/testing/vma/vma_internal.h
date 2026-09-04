@@ -14,8 +14,8 @@
 
 #include <stdlib.h>
 
-#define CONFIG_MMU		1
-#define CONFIG_PER_VMA_LOCK	1
+#define CONFIG_MMU
+#define CONFIG_PER_VMA_LOCK
 
 #ifdef __CONCAT
 #undef __CONCAT
@@ -53,7 +53,6 @@ typedef __bitwise unsigned int vm_fault_t;
 
 #define VM_WARN_ON(_expr) (WARN_ON(_expr))
 #define VM_WARN_ON_ONCE(_expr) (WARN_ON_ONCE(_expr))
-#define VM_WARN_ON_ONCE_VMA(_expr, _vma) (WARN_ON_ONCE(_expr))
 #define VM_WARN_ON_VMG(_expr, _vmg) (WARN_ON(_expr))
 #define VM_BUG_ON(_expr) (BUG_ON(_expr))
 #define VM_BUG_ON_VMA(_expr, _vma) (BUG_ON(_expr))

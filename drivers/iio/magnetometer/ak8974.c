@@ -379,7 +379,11 @@ static int ak8974_getresult(struct ak8974 *ak8974, __le16 *result)
 		return -ERANGE;
 	}
 
-	return regmap_bulk_read(ak8974->map, AK8974_DATA_X, result, 6);
+	ret = regmap_bulk_read(ak8974->map, AK8974_DATA_X, result, 6);
+	if (ret)
+		return ret;
+
+	return ret;
 }
 
 static irqreturn_t ak8974_drdy_irq(int irq, void *d)
@@ -922,8 +926,11 @@ static int ak8974_probe(struct i2c_client *i2c)
 						irq_trig,
 						ak8974->name,
 						ak8974);
-		if (ret)
+		if (ret) {
+			dev_err(&i2c->dev, "unable to request DRDY IRQ "
+				"- proceeding without IRQ\n");
 			goto no_irq;
+		}
 		ak8974->drdy_irq = true;
 	}
 

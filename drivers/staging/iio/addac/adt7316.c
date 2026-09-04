@@ -1814,8 +1814,11 @@ static int adt7316_setup_irq(struct iio_dev *indio_dev)
 					NULL, adt7316_event_handler,
 					irq_type | IRQF_ONESHOT,
 					indio_dev->name, indio_dev);
-	if (ret)
+	if (ret) {
+		dev_err(&indio_dev->dev, "failed to request irq %d\n",
+			chip->bus.irq);
 		return ret;
+	}
 
 	if (irq_type & IRQF_TRIGGER_HIGH)
 		chip->config1 |= ADT7316_INT_POLARITY;

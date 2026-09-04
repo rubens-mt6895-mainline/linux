@@ -94,7 +94,6 @@ static int __init eisa_eeprom_init(void)
 	return 0;
 }
 
-MODULE_DESCRIPTION("EISA eeprom driver");
 MODULE_LICENSE("GPL");
 
 module_init(eisa_eeprom_init);

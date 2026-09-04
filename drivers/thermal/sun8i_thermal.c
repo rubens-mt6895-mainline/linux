@@ -149,6 +149,7 @@ static const struct regmap_config config = {
 	.reg_bits = 32,
 	.val_bits = 32,
 	.reg_stride = 4,
+	.fast_io = true,
 	.max_register = 0xfc,
 };
 

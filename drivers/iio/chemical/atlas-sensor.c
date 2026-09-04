@@ -13,6 +13,7 @@
 #include <linux/mutex.h>
 #include <linux/err.h>
 #include <linux/irq.h>
+#include <linux/irq_work.h>
 #include <linux/i2c.h>
 #include <linux/regmap.h>
 #include <linux/iio/iio.h>
@@ -86,6 +87,7 @@ struct atlas_data {
 	struct iio_trigger *trig;
 	const struct atlas_device *chip;
 	struct regmap *regmap;
+	struct irq_work work;
 	unsigned int interrupt_enabled;
 	/* 96-bit data + 32-bit pad + 64-bit timestamp */
 	__be32 buffer[6] __aligned(8);
@@ -410,11 +412,7 @@ static int atlas_buffer_postenable(struct iio_dev *indio_dev)
 	if (ret)
 		return ret;
 
-	ret = atlas_set_interrupt(data, true);
-	if (ret)
-		pm_runtime_put_autosuspend(&data->client->dev);
-
-	return ret;
+	return atlas_set_interrupt(data, true);
 }
 
 static int atlas_buffer_predisable(struct iio_dev *indio_dev)
@@ -437,6 +435,13 @@ static const struct iio_buffer_setup_ops atlas_buffer_setup_ops = {
 	.postenable = atlas_buffer_postenable,
 	.predisable = atlas_buffer_predisable,
 };
+
+static void atlas_work_handler(struct irq_work *work)
+{
+	struct atlas_data *data = container_of(work, struct atlas_data, work);
+
+	iio_trigger_poll(data->trig);
+}
 
 static irqreturn_t atlas_trigger_handler(int irq, void *private)
 {
@@ -464,7 +469,7 @@ static irqreturn_t atlas_interrupt_handler(int irq, void *private)
 	struct iio_dev *indio_dev = private;
 	struct atlas_data *data = iio_priv(indio_dev);
 
-	iio_trigger_poll_nested(data->trig);
+	irq_work_queue(&data->work);
 
 	return IRQ_HANDLED;
 }
@@ -659,6 +664,8 @@ static int atlas_probe(struct i2c_client *client)
 		dev_err(&client->dev, "cannot setup iio trigger\n");
 		goto unregister_trigger;
 	}
+
+	init_irq_work(&data->work, atlas_work_handler);
 
 	if (client->irq > 0) {
 		/* interrupt pin toggles on new conversion */

@@ -438,13 +438,14 @@ static ssize_t current_password_store(struct kobject *kobj,
 	struct tlmi_pwd_setting *setting = to_tlmi_pwd_setting(kobj);
 	size_t pwdlen;
 
-	/* Strip newline; setting password won't work if one is present. */
-	pwdlen = strchrnul(buf, '\n') - buf;
+	pwdlen = strlen(buf);
 	/* pwdlen == 0 is allowed to clear the password */
 	if (pwdlen && ((pwdlen < setting->minlen) || (pwdlen > setting->maxlen)))
 		return -EINVAL;
 
-	strscpy(setting->password, buf, pwdlen + 1);
+	strscpy(setting->password, buf, setting->maxlen);
+	/* Strip out CR if one is present, setting password won't work if it is present */
+	strreplace(setting->password, '\n', '\0');
 	return count;
 }
 
@@ -744,8 +745,6 @@ static ssize_t certificate_thumbprint_show(struct kobject *kobj, struct kobj_att
 		return -EOPNOTSUPP;
 
 	for (i = 0; i < ARRAY_SIZE(thumbtypes); i++) {
-		ssize_t ret;
-
 		if (tlmi_priv.pwdcfg.core.password_mode >= TLMI_PWDCFG_MODE_MULTICERT) {
 			/* Format: 'SVC | SMC, Thumbtype' */
 			wmistr = kasprintf(GFP_KERNEL, "%s,%s",
@@ -757,12 +756,8 @@ static ssize_t certificate_thumbprint_show(struct kobject *kobj, struct kobj_att
 		}
 		if (!wmistr)
 			return -ENOMEM;
-
-		ret = cert_thumbprint(buf, wmistr, count);
+		count += cert_thumbprint(buf, wmistr, count);
 		kfree(wmistr);
-		if (ret < 0)
-			return ret;
-		count = ret;
 	}
 
 	return count;
@@ -1461,10 +1456,6 @@ static void tlmi_release_attr(void)
 	/* Free up any saved signatures */
 	kfree(tlmi_priv.pwd_admin->signature);
 	kfree(tlmi_priv.pwd_admin->save_signature);
-	if (tlmi_priv.pwd_system) {
-		kfree(tlmi_priv.pwd_system->signature);
-		kfree(tlmi_priv.pwd_system->save_signature);
-	}
 
 	/* Authentication structures */
 	list_for_each_entry_safe(pos, n, &tlmi_priv.authentication_kset->list, entry)

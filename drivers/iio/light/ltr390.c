@@ -838,7 +838,8 @@ static int ltr390_probe(struct i2c_client *client)
 						"ltr390_thresh_event",
 						indio_dev);
 		if (ret)
-			return ret;
+			return dev_err_probe(dev, ret,
+					     "request irq (%d) failed\n", client->irq);
 	}
 
 	ret = ltr390_pm_init(data);

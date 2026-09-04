@@ -95,13 +95,10 @@ static inline void rcu_read_unlock_tasks_trace(struct srcu_ctr __percpu *scp)
  */
 static inline void rcu_read_lock_trace(void)
 {
-	int n;
 	struct task_struct *t = current;
 
 	rcu_try_lock_acquire(&rcu_tasks_trace_srcu_struct.dep_map);
-	n = READ_ONCE(t->trc_reader_nesting);
-	WRITE_ONCE(t->trc_reader_nesting, n + 1);
-	if (n) {
+	if (t->trc_reader_nesting++) {
 		// In case we interrupted a Tasks Trace RCU reader.
 		return;
 	}
@@ -122,17 +119,12 @@ static inline void rcu_read_lock_trace(void)
  */
 static inline void rcu_read_unlock_trace(void)
 {
-	int n;
 	struct srcu_ctr __percpu *scp;
 	struct task_struct *t = current;
 
-	n = READ_ONCE(t->trc_reader_nesting) - 1;
-	if (n) {
-		WRITE_ONCE(t->trc_reader_nesting, n);
-	} else {
-		scp = t->trc_reader_scp; // Compiler cannot hoist load due to data raciness.
-		barrier();  // scp before nesting to protect against interrupt handler.
-		WRITE_ONCE(t->trc_reader_nesting, n);
+	scp = t->trc_reader_scp;
+	barrier();  // scp before nesting to protect against interrupt handler.
+	if (!--t->trc_reader_nesting) {
 		if (!IS_ENABLED(CONFIG_TASKS_TRACE_RCU_NO_MB))
 			smp_mb(); // Placeholder for more selective ordering
 		__srcu_read_unlock_fast(&rcu_tasks_trace_srcu_struct, scp);
@@ -206,13 +198,10 @@ static inline void rcu_tasks_trace_expedite_current(void)
 	srcu_expedite_current(&rcu_tasks_trace_srcu_struct);
 }
 
-unsigned long rcu_tasks_trace_batches_completed(void);
-
 // Placeholders to enable stepwise transition.
 void __init rcu_tasks_trace_suppress_unused(void);
 
 #else
-static inline unsigned long rcu_tasks_trace_batches_completed(void) { return 0; }
 /*
  * The BPF JIT forms these addresses even when it doesn't call these
  * functions, so provide definitions that result in runtime errors.

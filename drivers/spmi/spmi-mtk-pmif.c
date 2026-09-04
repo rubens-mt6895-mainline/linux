@@ -491,9 +491,20 @@ static void mtk_spmi_handle_chained_irq(struct irq_desc *desc)
 	for (i = regidx_min; i <= regidx_max; i++) {
 		u32 val = mtk_spmi_readl(arb, pbus, i);
 
+		if (!val)
+			continue;
+
+		/*
+		 * Clear the observed status bits before handling them.  If a
+		 * spurious/unhandled bit is left set, the parent IRQ stays asserted
+		 * and we get an interrupt storm (seen on MT6895 as endless
+		 * "top_irq_sts:0x0" from the PMIC MFD).
+		 */
+		mtk_spmi_writel(arb, pbus, val, i);
+
 		while (val) {
 			u8 bit = __ffs(val);
-			u8 bank = bit / 7;
+			u8 bank = bit / 8;
 			u8 sid = ((i - SPMI_SLV_3_0_EINT) * 4) + bank;
 
 			val &= ~(PMIF_RCS_IRQ_MASK << (8 * bank));
@@ -644,6 +655,18 @@ static const struct pmif_data mt8196_pmif_arb = {
 	.num_spmi_buses = 2,
 };
 
+/*
+ * MT6895 uses the same PMIF + SPMI master register layout as MT8195
+ * (verified against the downstream mt6895 tree: mt6xxx_regs == mt8195_regs,
+ * mt6853_spmi_regs == mt8195_spmi_regs, soc_chan == 2 -> swinf_ch_start 0x0a).
+ */
+static const struct pmif_data mt6895_pmif_arb = {
+	.regs = mt8195_regs,
+	.spmimst_regs = mt8195_spmi_regs,
+	.soc_chan = 2,
+	.spmi_ver = 2,
+};
+
 static int mtk_spmi_irq_init(struct device_node *node,
 			     const struct pmif_data *pdata,
 			     struct pmif_bus *pbus)
@@ -657,7 +680,13 @@ static int mtk_spmi_irq_init(struct device_node *node,
 		return 0;
 	}
 
-	pbus->irq = of_irq_get_byname(node, "rcs");
+	/*
+	 * Upstream has used "rcs" as the SPMI interrupt name; the xaga
+	 * downstream DT uses "rcs_irq" for the PMIC INT line. Accept both.
+	 */
+	pbus->irq = of_irq_get_byname(node, "rcs_irq");
+	if (pbus->irq == -EINVAL || pbus->irq == -ENODATA)
+		pbus->irq = of_irq_get_byname(node, "rcs");
 	if (pbus->irq <= 0)
 		return pbus->irq ? : -ENXIO;
 
@@ -844,6 +873,9 @@ static const struct of_device_id mtk_spmi_match_table[] = {
 	}, {
 		.compatible = "mediatek,mt8196-spmi",
 		.data = &mt8196_pmif_arb,
+	}, {
+		.compatible = "mediatek,mt6895-spmi",
+		.data = &mt6895_pmif_arb,
 	}, {
 		/* sentinel */
 	},

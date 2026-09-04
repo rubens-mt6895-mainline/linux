@@ -988,7 +988,7 @@ static void test_vgic_two_cpus(void *gcode)
 	struct test_args args = {};
 	struct kvm_vm *vm;
 	gva_t args_gva;
-	int gic_fd;
+	int gic_fd, ret;
 
 	vm = vm_create_with_vcpus(2, gcode, vcpus);
 
@@ -1004,11 +1004,15 @@ static void test_vgic_two_cpus(void *gcode)
 
 	gic_fd = vgic_v3_setup(vm, 2, 64);
 
-	kvm_pthread_create(&thr[0], NULL, test_vcpu_run, vcpus[0]);
-	kvm_pthread_create(&thr[1], NULL, test_vcpu_run, vcpus[1]);
+	ret = pthread_create(&thr[0], NULL, test_vcpu_run, vcpus[0]);
+	if (ret)
+		TEST_FAIL("Can't create thread for vcpu 0 (%d)\n", ret);
+	ret = pthread_create(&thr[1], NULL, test_vcpu_run, vcpus[1]);
+	if (ret)
+		TEST_FAIL("Can't create thread for vcpu 1 (%d)\n", ret);
 
-	kvm_pthread_join(thr[0], NULL);
-	kvm_pthread_join(thr[1], NULL);
+	pthread_join(thr[0], NULL);
+	pthread_join(thr[1], NULL);
 
 	close(gic_fd);
 	kvm_vm_free(vm);

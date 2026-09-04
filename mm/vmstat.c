@@ -30,7 +30,6 @@
 #include <linux/sched/isolation.h>
 
 #include "internal.h"
-#include "page_alloc.h"
 
 #ifdef CONFIG_PROC_FS
 #ifdef CONFIG_NUMA
@@ -1025,17 +1024,6 @@ unsigned long node_page_state(struct pglist_data *pgdat,
 
 	return node_page_state_pages(pgdat, item);
 }
-
-/*
- * Non-clamping variant of node_page_state() intended for callers that
- * snapshot a monotonically-incremented counter and subtract two samples.
- * See global_node_page_state_monotonic() for the rationale.
- */
-unsigned long node_page_state_monotonic(struct pglist_data *pgdat,
-					enum node_stat_item item)
-{
-	return (unsigned long)atomic_long_read(&pgdat->vm_stat[item]);
-}
 #endif
 
 /*
@@ -1301,8 +1289,6 @@ const char * const vmstat_text[] = {
 	[I(PGSCAN_PROACTIVE)]			= "pgscan_proactive",
 	[I(PGSCAN_ANON)]			= "pgscan_anon",
 	[I(PGSCAN_FILE)]			= "pgscan_file",
-	[I(PGROTATE_ANON)]			= "pgrotate_anon",
-	[I(PGROTATE_FILE)]			= "pgrotate_file",
 	[I(PGREFILL)]				= "pgrefill",
 #ifdef CONFIG_HUGETLB_PAGE
 	[I(NR_HUGETLB)]				= "nr_hugetlb",
@@ -1502,11 +1488,7 @@ const char * const vmstat_text[] = {
 #if THREAD_SIZE > 65536
 	[I(KSTACK_REST)]			= "kstack_rest",
 #endif
-#endif /* CONFIG_DEBUG_STACK_USAGE */
-#ifdef CONFIG_SWAP
-	[I(NRSWPIN)]				= "nrswpin",
-	[I(NRSWPOUT)]				= "nrswpout",
-#endif /* CONFIG_SWAP */
+#endif
 #undef I
 #endif /* CONFIG_VM_EVENT_COUNTERS */
 };
@@ -1586,7 +1568,7 @@ static void frag_show_print(struct seq_file *m, pg_data_t *pgdat,
 static int frag_show(struct seq_file *m, void *arg)
 {
 	pg_data_t *pgdat = (pg_data_t *)arg;
-	walk_zones_in_node(m, pgdat, true, true, frag_show_print);
+	walk_zones_in_node(m, pgdat, true, false, frag_show_print);
 	return 0;
 }
 

@@ -2233,7 +2233,7 @@ static struct fl_flow_mask *fl_create_new_mask(struct cls_fl_head *head,
 	struct fl_flow_mask *newmask;
 	int err;
 
-	newmask = kzalloc_obj(*newmask, GFP_KERNEL_ACCOUNT);
+	newmask = kzalloc_obj(*newmask);
 	if (!newmask)
 		return ERR_PTR(-ENOMEM);
 
@@ -2394,7 +2394,7 @@ static int fl_change(struct net *net, struct sk_buff *in_skb,
 		goto errout_tb;
 	}
 
-	fnew = kzalloc_obj(*fnew, GFP_KERNEL_ACCOUNT);
+	fnew = kzalloc_obj(*fnew);
 	if (!fnew) {
 		err = -ENOBUFS;
 		goto errout_tb;

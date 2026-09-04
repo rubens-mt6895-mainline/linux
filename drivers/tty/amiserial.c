@@ -443,23 +443,23 @@ static int rs_startup(struct tty_struct *tty, struct serial_state *info)
 	struct tty_port *port = &info->tport;
 	unsigned long flags;
 	int	retval=0;
-	void *buffer;
+	unsigned long page;
 
-	buffer = kzalloc(PAGE_SIZE, GFP_KERNEL);
-	if (!buffer)
+	page = get_zeroed_page(GFP_KERNEL);
+	if (!page)
 		return -ENOMEM;
 
 	local_irq_save(flags);
 
 	if (tty_port_initialized(port)) {
-		kfree(buffer);
+		free_page(page);
 		goto errout;
 	}
 
 	if (info->xmit.buf)
-		kfree(buffer);
+		free_page(page);
 	else
-		info->xmit.buf = buffer;
+		info->xmit.buf = (unsigned char *) page;
 
 #ifdef SERIAL_DEBUG_OPEN
 	printk("starting up ttys%d ...", info->line);
@@ -537,7 +537,7 @@ static void rs_shutdown(struct tty_struct *tty, struct serial_state *info)
 	 */
 	free_irq(IRQ_AMIGA_VERTB, info);
 
-	kfree(info->xmit.buf);
+	free_page((unsigned long)info->xmit.buf);
 	info->xmit.buf = NULL;
 
 	info->IER = 0;

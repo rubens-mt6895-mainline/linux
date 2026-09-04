@@ -18,12 +18,6 @@ void vcap_port_debugfs(struct device *dev, struct dentry *parent,
 		       struct vcap_control *vctrl,
 		       struct net_device *ndev);
 
-void vcap_port_debugfs_portno(struct device *dev,
-			      struct dentry *parent,
-			      struct vcap_control *vctrl,
-			      struct net_device *ndev,
-			      unsigned int portno);
-
 /* Create a debugFS entry for a vcap instance */
 struct dentry *vcap_debugfs(struct device *dev, struct dentry *parent,
 			    struct vcap_control *vctrl);
@@ -33,14 +27,6 @@ struct dentry *vcap_debugfs(struct device *dev, struct dentry *parent,
 static inline void vcap_port_debugfs(struct device *dev, struct dentry *parent,
 				     struct vcap_control *vctrl,
 				     struct net_device *ndev)
-{
-}
-
-static inline void vcap_port_debugfs_portno(struct device *dev,
-					    struct dentry *parent,
-					    struct vcap_control *vctrl,
-					    struct net_device *ndev,
-					    unsigned int portno)
 {
 }
 

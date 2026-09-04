@@ -105,7 +105,6 @@ struct gaokun_ucsi {
 	struct notifier_block nb;
 	u16 version;
 	u8 num_ports;
-	bool registered;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -483,13 +482,8 @@ static void gaokun_ucsi_register_worker(struct work_struct *work)
 	}
 
 	ret = ucsi_register(ucsi);
-	if (ret) {
+	if (ret)
 		dev_err_probe(ucsi->dev, ret, "ucsi register failed\n");
-		gaokun_ec_unregister_notify(uec->ec, &uec->nb);
-		return;
-	}
-
-	uec->registered = true;
 }
 
 static int gaokun_ucsi_probe(struct auxiliary_device *adev,
@@ -534,11 +528,8 @@ static void gaokun_ucsi_remove(struct auxiliary_device *adev)
 	int i;
 
 	disable_delayed_work_sync(&uec->work);
-	if (uec->registered) {
-		gaokun_ec_unregister_notify(uec->ec, &uec->nb);
-		ucsi_unregister(uec->ucsi);
-	}
-
+	gaokun_ec_unregister_notify(uec->ec, &uec->nb);
+	ucsi_unregister(uec->ucsi);
 	for (i = 0; i < uec->num_ports; ++i)
 		typec_mux_put(uec->ports[i].typec_mux);
 

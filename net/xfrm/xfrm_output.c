@@ -636,8 +636,10 @@ static int xfrm_dev_direct_output(struct sock *sk, struct xfrm_state *x,
 	nf_reset_ct(skb);
 
 	err = skb_dst(skb)->ops->local_out(net, sk, skb);
-	if (unlikely(err != 1))
+	if (unlikely(err != 1)) {
+		kfree_skb(skb);
 		return err;
+	}
 
 	/* In transport mode, network destination is
 	 * directly reachable, while in tunnel mode,

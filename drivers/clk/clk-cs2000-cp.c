@@ -122,8 +122,8 @@ static const struct of_device_id cs2000_of_match[] = {
 MODULE_DEVICE_TABLE(of, cs2000_of_match);
 
 static const struct i2c_device_id cs2000_id[] = {
-	{ .name = "cs2000-cp" },
-	{ }
+	{ "cs2000-cp", },
+	{}
 };
 MODULE_DEVICE_TABLE(i2c, cs2000_id);
 
@@ -404,7 +404,11 @@ static int cs2000_enable(struct clk_hw *hw)
 	if (ret < 0)
 		return ret;
 
-	return cs2000_wait_pll_lock(priv);
+	ret = cs2000_wait_pll_lock(priv);
+	if (ret < 0)
+		return ret;
+
+	return ret;
 }
 
 static void cs2000_disable(struct clk_hw *hw)

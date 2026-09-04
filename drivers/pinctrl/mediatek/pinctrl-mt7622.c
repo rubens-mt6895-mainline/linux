@@ -874,7 +874,6 @@ static const struct of_device_id mt7622_pinctrl_of_match[] = {
 	{ .compatible = "mediatek,mt7622-pinctrl", },
 	{ }
 };
-MODULE_DEVICE_TABLE(of, mt7622_pinctrl_of_match);
 
 static int mt7622_pinctrl_probe(struct platform_device *pdev)
 {
@@ -894,7 +893,3 @@ static int __init mt7622_pinctrl_init(void)
 	return platform_driver_register(&mt7622_pinctrl_driver);
 }
 arch_initcall(mt7622_pinctrl_init);
-
-MODULE_DESCRIPTION("MediaTek MT7622 Pinctrl Driver");
-MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS("MTK_PINCTRL");

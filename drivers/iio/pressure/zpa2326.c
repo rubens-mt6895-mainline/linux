@@ -911,8 +911,11 @@ static int zpa2326_init_managed_irq(struct device          *parent,
 					zpa2326_handle_threaded_irq,
 					IRQF_TRIGGER_RISING | IRQF_ONESHOT,
 					dev_name(parent), indio_dev);
-	if (err)
+	if (err) {
+		dev_err(parent, "failed to request interrupt %d (%d)", irq,
+			err);
 		return err;
+	}
 
 	dev_info(parent, "using interrupt %d", irq);
 

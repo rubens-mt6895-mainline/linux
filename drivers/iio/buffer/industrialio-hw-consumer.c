@@ -216,4 +216,3 @@ EXPORT_SYMBOL_GPL(iio_hw_consumer_disable);
 MODULE_AUTHOR("Lars-Peter Clausen <lars@metafoo.de>");
 MODULE_DESCRIPTION("Hardware consumer buffer the IIO framework");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS("IIO_CONSUMER");

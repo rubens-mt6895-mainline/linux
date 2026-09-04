@@ -2,7 +2,6 @@
 #ifndef __MM_CMA_H__
 #define __MM_CMA_H__
 
-#include <linux/cma.h>
 #include <linux/debugfs.h>
 #include <linux/kobject.h>
 

@@ -2333,17 +2333,7 @@ mft_rec_already_initialized:
 		 * wrong with the previous mft record.
 		 */
 		seq_no = m->sequence_number;
-		/*
-		 * The mft record still holds unvalidated, MST-protected on-disk
-		 * bytes, so m->usa_ofs is untrusted here.  Only preserve the old
-		 * update sequence number if that offset is in bounds; otherwise
-		 * leave usn zero so it is not restored below.
-		 */
-		if (!(le16_to_cpu(m->usa_ofs) & 1) &&
-		    le16_to_cpu(m->usa_ofs) + sizeof(usn) <= vol->mft_record_size)
-			usn = *(__le16 *)((u8 *)m + le16_to_cpu(m->usa_ofs));
-		else
-			usn = 0;
+		usn = *(__le16 *)((u8 *)m + le16_to_cpu(m->usa_ofs));
 		err = ntfs_mft_record_layout(vol, bit, m);
 		if (unlikely(err)) {
 			ntfs_error(vol->sb, "Failed to layout allocated mft record 0x%llx.",
@@ -2430,7 +2420,7 @@ mft_rec_already_initialized:
 		 * record.
 		 */
 
-		(*ni)->mrec = kmemdup(m, vol->mft_record_size, GFP_NOFS);
+		(*ni)->mrec = kmalloc(vol->mft_record_size, GFP_NOFS);
 		if (!(*ni)->mrec) {
 			folio_unlock(folio);
 			kunmap_local(m);
@@ -2439,6 +2429,7 @@ mft_rec_already_initialized:
 			goto undo_mftbmp_alloc;
 		}
 
+		memcpy((*ni)->mrec, m, vol->mft_record_size);
 		post_read_mst_fixup((struct ntfs_record *)(*ni)->mrec, vol->mft_record_size);
 		ntfs_mft_mark_dirty(folio);
 		folio_unlock(folio);

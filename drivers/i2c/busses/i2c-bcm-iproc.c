@@ -1147,7 +1147,8 @@ static int bcm_iproc_i2c_probe(struct platform_device *pdev)
 				       bcm_iproc_i2c_isr, 0, pdev->name,
 				       iproc_i2c);
 		if (ret < 0)
-			return ret;
+			return dev_err_probe(iproc_i2c->device, ret,
+					     "unable to request irq %i\n", irq);
 
 		iproc_i2c->irq = irq;
 	} else {

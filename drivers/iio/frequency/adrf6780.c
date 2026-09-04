@@ -486,7 +486,7 @@ static int adrf6780_probe(struct spi_device *spi)
 }
 
 static const struct spi_device_id adrf6780_id[] = {
-	{ .name = "adrf6780" },
+	{ "adrf6780", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, adrf6780_id);

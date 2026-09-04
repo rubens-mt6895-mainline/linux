@@ -577,8 +577,6 @@ static int torture_shuffle(void *arg)
  */
 int torture_shuffle_init(long shuffint)
 {
-	int ret;
-
 	shuffle_interval = shuffint;
 
 	shuffle_idle_cpu = -1;
@@ -589,10 +587,7 @@ int torture_shuffle_init(long shuffint)
 	}
 
 	/* Create the shuffler thread */
-	ret = torture_create_kthread(torture_shuffle, NULL, shuffler_task);
-	if (ret)
-		free_cpumask_var(shuffle_tmp_mask);
-	return ret;
+	return torture_create_kthread(torture_shuffle, NULL, shuffler_task);
 }
 EXPORT_SYMBOL_GPL(torture_shuffle_init);
 

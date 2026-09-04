@@ -11,8 +11,6 @@
 #ifndef __AA_PROCATTR_H
 #define __AA_PROCATTR_H
 
-#include "label.h"
-
 int aa_getprocattr(struct aa_label *label, char **string, bool newline);
 int aa_setprocattr_changehat(char *args, size_t size, int flags);
 

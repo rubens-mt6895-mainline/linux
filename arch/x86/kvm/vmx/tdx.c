@@ -897,10 +897,13 @@ void tdx_vcpu_free(struct kvm_vcpu *vcpu)
 	tdx->state = VCPU_TD_STATE_UNINITIALIZED;
 }
 
-bool tdx_vcpu_needs_initialization(struct kvm_vcpu *vcpu)
+int tdx_vcpu_pre_run(struct kvm_vcpu *vcpu)
 {
-	return to_tdx(vcpu)->state != VCPU_TD_STATE_INITIALIZED ||
-	       to_kvm_tdx(vcpu->kvm)->state != TD_STATE_RUNNABLE;
+	if (unlikely(to_tdx(vcpu)->state != VCPU_TD_STATE_INITIALIZED ||
+		     to_kvm_tdx(vcpu->kvm)->state != TD_STATE_RUNNABLE))
+		return -EINVAL;
+
+	return 1;
 }
 
 static __always_inline u32 tdcall_to_vmx_exit_reason(struct kvm_vcpu *vcpu)
@@ -3189,6 +3192,9 @@ static int tdx_gmem_post_populate(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn,
 	if (KVM_BUG_ON(kvm_tdx->page_add_src, kvm))
 		return -EIO;
 
+	if (!src_page)
+		return -EOPNOTSUPP;
+
 	kvm_tdx->page_add_src = src_page;
 	ret = kvm_tdp_mmu_map_private_pfn(arg->vcpu, gfn, pfn);
 	kvm_tdx->page_add_src = NULL;
@@ -3235,8 +3241,8 @@ static int tdx_vcpu_init_mem_region(struct kvm_vcpu *vcpu, struct kvm_tdx_cmd *c
 	if (copy_from_user(&region, u64_to_user_ptr(cmd->data), sizeof(region)))
 		return -EFAULT;
 
-	if (!PAGE_ALIGNED(region.source_addr) || !region.source_addr ||
-	    !PAGE_ALIGNED(region.gpa) || !region.nr_pages ||
+	if (!PAGE_ALIGNED(region.source_addr) || !PAGE_ALIGNED(region.gpa) ||
+	    !region.nr_pages ||
 	    region.gpa + (region.nr_pages << PAGE_SHIFT) <= region.gpa ||
 	    !vt_is_tdx_private_gpa(kvm, region.gpa) ||
 	    !vt_is_tdx_private_gpa(kvm, region.gpa + (region.nr_pages << PAGE_SHIFT) - 1))

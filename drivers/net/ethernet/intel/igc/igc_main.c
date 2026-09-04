@@ -785,8 +785,11 @@ static void igc_setup_mrqc(struct igc_adapter *adapter)
 	struct igc_hw *hw = &adapter->hw;
 	u32 j, num_rx_queues;
 	u32 mrqc, rxcsum;
+	u32 rss_key[10];
 
-	igc_write_rss_key(adapter);
+	netdev_rss_key_fill(rss_key, sizeof(rss_key));
+	for (j = 0; j < 10; j++)
+		wr32(IGC_RSSRK(j), rss_key[j]);
 
 	num_rx_queues = adapter->rss_queues;
 
@@ -3071,8 +3074,7 @@ static void igc_xdp_xmit_zc(struct igc_ring *ring)
 		olinfo_status = xdp_desc.len << IGC_ADVTXD_PAYLEN_SHIFT;
 
 		dma = xsk_buff_raw_get_dma(pool, xdp_desc.addr);
-		meta = xsk_buff_get_metadata(pool, xdp_desc.addr,
-					     xdp_desc.options);
+		meta = xsk_buff_get_metadata(pool, xdp_desc.addr);
 		xsk_buff_raw_dma_sync_for_device(pool, dma, xdp_desc.len);
 		bi = &ring->tx_buffer_info[ntu];
 
@@ -5045,9 +5047,6 @@ static int igc_sw_init(struct igc_adapter *adapter)
 	struct igc_hw *hw = &adapter->hw;
 
 	pci_read_config_word(pdev, PCI_COMMAND, &hw->bus.pci_cmd_word);
-
-	/* init RSS key */
-	netdev_rss_key_fill(adapter->rss_key, sizeof(adapter->rss_key));
 
 	/* set default ring sizes */
 	adapter->tx_ring_count = IGC_DEFAULT_TXD;
@@ -7298,7 +7297,7 @@ static int igc_probe(struct pci_dev *pdev,
 	/* Initialize link properties that are user-changeable */
 	adapter->fc_autoneg = true;
 	hw->phy.autoneg_advertised = 0xaf;
-	hw->mac.autoneg_enabled = true;
+
 	hw->fc.requested_mode = igc_fc_default;
 	hw->fc.current_mode = igc_fc_default;
 

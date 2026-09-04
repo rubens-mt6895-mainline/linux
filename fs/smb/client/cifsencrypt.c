@@ -249,13 +249,12 @@ static int calc_ntlmv2_hash(struct cifs_ses *ses, char *ntlmv2_hash,
 	E_md4hash(ses->password, nt_hash, nls_cp);
 
 	hmac_md5_init_usingrawkey(&hmac_ctx, nt_hash, CIFS_NTHASH_SIZE);
-	memzero_explicit(nt_hash, sizeof(nt_hash));
 
 	/* convert ses->user_name to unicode */
 	len = ses->user_name ? strlen(ses->user_name) : 0;
 	user = kmalloc(2 + (len * 2), GFP_KERNEL);
 	if (user == NULL)
-		goto out_nomem;
+		return -ENOMEM;
 
 	if (len) {
 		len = cifs_strtoUTF16(user, ses->user_name, len, nls_cp);
@@ -273,7 +272,7 @@ static int calc_ntlmv2_hash(struct cifs_ses *ses, char *ntlmv2_hash,
 
 		domain = kmalloc(2 + (len * 2), GFP_KERNEL);
 		if (domain == NULL)
-			goto out_nomem;
+			return -ENOMEM;
 
 		len = cifs_strtoUTF16((__le16 *)domain, ses->domainName, len,
 				      nls_cp);
@@ -285,7 +284,7 @@ static int calc_ntlmv2_hash(struct cifs_ses *ses, char *ntlmv2_hash,
 
 		server = kmalloc(2 + (len * 2), GFP_KERNEL);
 		if (server == NULL)
-			goto out_nomem;
+			return -ENOMEM;
 
 		len = cifs_strtoUTF16((__le16 *)server, ses->ip_addr, len, nls_cp);
 		hmac_md5_update(&hmac_ctx, (const u8 *)server, 2 * len);
@@ -294,10 +293,6 @@ static int calc_ntlmv2_hash(struct cifs_ses *ses, char *ntlmv2_hash,
 
 	hmac_md5_final(&hmac_ctx, ntlmv2_hash);
 	return 0;
-
-out_nomem:
-	memzero_explicit(&hmac_ctx, sizeof(hmac_ctx));
-	return -ENOMEM;
 }
 
 static void CalcNTLMv2_response(const struct cifs_ses *ses, char *ntlmv2_hash)
@@ -468,7 +463,6 @@ setup_ntlmv2_rsp(struct cifs_ses *ses, const struct nls_table *nls_cp)
 	rc = 0;
 unlock:
 	cifs_server_unlock(ses->server);
-	memzero_explicit(ntlmv2_hash, sizeof(ntlmv2_hash));
 setup_ntlmv2_rsp_ret:
 	kfree_sensitive(tiblob);
 

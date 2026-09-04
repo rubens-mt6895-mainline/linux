@@ -27,6 +27,8 @@ static void l2_guest_code(void)
 
 static void l1_guest_code(struct vmx_pages *vmx_pages)
 {
+#define L2_GUEST_STACK_SIZE 64
+	unsigned long l2_guest_stack[L2_GUEST_STACK_SIZE];
 	u64 guest_cr4;
 	gpa_t pml5_pa, pml4_pa;
 	u64 *pml5;
@@ -40,7 +42,8 @@ static void l1_guest_code(struct vmx_pages *vmx_pages)
 	GUEST_ASSERT(prepare_for_vmx_operation(vmx_pages));
 	GUEST_ASSERT(load_vmcs(vmx_pages));
 
-	prepare_vmcs(vmx_pages, l2_guest_code);
+	prepare_vmcs(vmx_pages, l2_guest_code,
+		     &l2_guest_stack[L2_GUEST_STACK_SIZE]);
 
 	/*
 	 * Set up L2 with a 4-level page table by pointing its CR3 to

@@ -305,7 +305,8 @@ static int zxi2c_probe(struct platform_device *pdev)
 	error = devm_request_irq(&pdev->dev, i2c->irq, zxi2c_isr,
 				 IRQF_SHARED, pdev->name, i2c);
 	if (error)
-		return error;
+		return dev_err_probe(&pdev->dev, error,
+				"failed to request irq %i\n", i2c->irq);
 
 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)

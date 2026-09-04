@@ -9,7 +9,6 @@
 
 #include <linux/slab.h>
 #include <linux/uaccess.h>
-#include <linux/bitfield.h>
 
 #include "xhci.h"
 #include "xhci-debugfs.h"
@@ -792,7 +791,7 @@ void xhci_debugfs_init(struct xhci_hcd *xhci)
 			    xhci->debugfs_root, "reg-cap");
 
 	xhci_debugfs_regset(xhci,
-			    FIELD_GET(HC_LENGTH, readl(&xhci->cap_regs->hc_capbase)),
+			    HC_LENGTH(readl(&xhci->cap_regs->hc_capbase)),
 			    xhci_op_regs, ARRAY_SIZE(xhci_op_regs),
 			    xhci->debugfs_root, "reg-op");
 

@@ -16,7 +16,6 @@
 #include <linux/vmstat.h>
 
 #include "internal.h"
-#include "page_alloc.h"
 #include "swap.h"
 
 atomic_long_t _totalram_pages __read_mostly;
@@ -117,8 +116,7 @@ void si_meminfo_node(struct sysinfo *val, int nid)
  * Determine whether the node should be displayed or not, depending on whether
  * SHOW_MEM_FILTER_NODES was passed to show_free_areas().
  */
-static bool show_mem_node_skip(unsigned int flags, int nid,
-			       const nodemask_t *nodemask)
+static bool show_mem_node_skip(unsigned int flags, int nid, nodemask_t *nodemask)
 {
 	if (!(flags & SHOW_MEM_FILTER_NODES))
 		return false;
@@ -179,8 +177,7 @@ static bool node_has_managed_zones(pg_data_t *pgdat, int max_zone_idx)
  * SHOW_MEM_FILTER_NODES: suppress nodes that are not allowed by current's
  *   cpuset.
  */
-static void show_free_areas(unsigned int filter, const nodemask_t *nodemask,
-			    int max_zone_idx)
+static void show_free_areas(unsigned int filter, nodemask_t *nodemask, int max_zone_idx)
 {
 	unsigned long free_pcp = 0;
 	int cpu, nid;
@@ -309,8 +306,8 @@ static void show_free_areas(unsigned int filter, const nodemask_t *nodemask,
 			" min:%lukB"
 			" low:%lukB"
 			" high:%lukB"
-			" reserved_highatomic:%lukB"
-			" free_highatomic:%lukB"
+			" reserved_highatomic:%luKB"
+			" free_highatomic:%luKB"
 			" active_anon:%lukB"
 			" inactive_anon:%lukB"
 			" active_file:%lukB"
@@ -323,7 +320,7 @@ static void show_free_areas(unsigned int filter, const nodemask_t *nodemask,
 			" mlocked:%lukB"
 			" bounce:%lukB"
 			" free_pcp:%lukB"
-			" local_pcp:%lukB"
+			" local_pcp:%ukB"
 			" free_cma:%lukB"
 			"\n",
 			zone->name,
@@ -350,7 +347,7 @@ static void show_free_areas(unsigned int filter, const nodemask_t *nodemask,
 			K(zone_page_state(zone, NR_MLOCK)),
 			0UL,
 			K(free_pcp),
-			K((unsigned long)this_cpu_read(zone->per_cpu_pageset->count)),
+			K(this_cpu_read(zone->per_cpu_pageset->count)),
 			K(zone_page_state(zone, NR_FREE_CMA_PAGES)));
 		printk("lowmem_reserve[]:");
 		for (i = 0; i < MAX_NR_ZONES; i++)
@@ -400,13 +397,12 @@ static void show_free_areas(unsigned int filter, const nodemask_t *nodemask,
 		hugetlb_show_meminfo_node(nid);
 	}
 
-	printk("%lu total pagecache pages\n", global_node_page_state(NR_FILE_PAGES));
+	printk("%ld total pagecache pages\n", global_node_page_state(NR_FILE_PAGES));
 
 	show_swap_cache_info();
 }
 
-void __show_mem(unsigned int filter, const nodemask_t *nodemask,
-		int max_zone_idx)
+void __show_mem(unsigned int filter, nodemask_t *nodemask, int max_zone_idx)
 {
 	unsigned long total = 0, reserved = 0, highmem = 0;
 	struct zone *zone;
@@ -430,7 +426,7 @@ void __show_mem(unsigned int filter, const nodemask_t *nodemask,
 	printk("%lu pages cma reserved\n", totalcma_pages);
 #endif
 #ifdef CONFIG_MEMORY_FAILURE
-	printk("%ld pages hwpoisoned\n", atomic_long_read(&num_poisoned_pages));
+	printk("%lu pages hwpoisoned\n", atomic_long_read(&num_poisoned_pages));
 #endif
 #ifdef CONFIG_MEM_ALLOC_PROFILING
 	static DEFINE_SPINLOCK(mem_alloc_profiling_spinlock);

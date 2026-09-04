@@ -75,7 +75,7 @@ static void *migration_worker(void *__rseq_tid)
 {
 	pid_t rseq_tid = (pid_t)(unsigned long)__rseq_tid;
 	cpu_set_t allowed_mask;
-	int i, cpu;
+	int r, i, cpu;
 
 	CPU_ZERO(&allowed_mask);
 
@@ -96,7 +96,9 @@ static void *migration_worker(void *__rseq_tid)
 		 * stable, i.e. while changing affinity is in-progress.
 		 */
 		smp_wmb();
-		kvm_sched_setaffinity(rseq_tid, sizeof(allowed_mask), &allowed_mask);
+		r = sched_setaffinity(rseq_tid, sizeof(allowed_mask), &allowed_mask);
+		TEST_ASSERT(!r, "sched_setaffinity failed, errno = %d (%s)",
+			    errno, strerror(errno));
 		smp_wmb();
 		atomic_inc(&seq_cnt);
 
@@ -224,7 +226,9 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	kvm_sched_getaffinity(0, sizeof(possible_mask), &possible_mask);
+	r = sched_getaffinity(0, sizeof(possible_mask), &possible_mask);
+	TEST_ASSERT(!r, "sched_getaffinity failed, errno = %d (%s)", errno,
+		    strerror(errno));
 
 	calc_min_max_cpu();
 
@@ -239,8 +243,8 @@ int main(int argc, char *argv[])
 	 */
 	vm = vm_create_with_one_vcpu(&vcpu, guest_code);
 
-	kvm_pthread_create(&migration_thread, NULL, migration_worker,
-			   (void *)(unsigned long)kvm_gettid());
+	pthread_create(&migration_thread, NULL, migration_worker,
+		       (void *)(unsigned long)syscall(SYS_gettid));
 
 	if (latency >= 0) {
 		/*
@@ -312,7 +316,7 @@ int main(int argc, char *argv[])
 		    "  e.g. via cpuidle.off=1 or via -l <latency>, or run with -u to\n"
 		    "  disable this sanity check.", i);
 
-	kvm_pthread_join(migration_thread, NULL);
+	pthread_join(migration_thread, NULL);
 
 	kvm_vm_free(vm);
 

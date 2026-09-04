@@ -530,8 +530,7 @@ static int cuse_channel_open(struct inode *inode, struct file *file)
 
 	INIT_LIST_HEAD(&cc->list);
 
-	/* Pairs with smp_load_acquire() readers of fch->initialized */
-	smp_store_release(&cc->fc.chan->initialized, 1);
+	cc->fc.chan->initialized = 1;
 	rc = cuse_send_init(cc);
 	if (rc) {
 		fuse_dev_put(fud);
@@ -654,11 +653,6 @@ static void __exit cuse_exit(void)
 {
 	misc_deregister(&cuse_miscdev);
 	class_destroy(cuse_class);
-	/*
-	 * Wait for pending call_rcu() callbacks that call back into
-	 * this module via fc->release (cuse_fc_release).
-	 */
-	rcu_barrier();
 }
 
 module_init(cuse_init);

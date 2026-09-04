@@ -17,7 +17,6 @@
 #include <linux/mm.h>
 #include <linux/dma-mapping.h>
 #include <linux/serial_core.h>
-#include <linux/wordpart.h>
 
 /* Goldfish tty register's offsets */
 #define	GOLDFISH_TTY_REG_BYTES_READY	0x04
@@ -38,6 +37,7 @@ struct goldfish_tty {
 	spinlock_t lock;
 	void __iomem *base;
 	u32 irq;
+	int opencount;
 	struct console console;
 	u32 version;
 	struct device *dev;
@@ -49,23 +49,15 @@ static u32 goldfish_tty_line_count = 8;
 static u32 goldfish_tty_current_line_count;
 static struct goldfish_tty *goldfish_ttys;
 
-static inline void gf_write_addr(unsigned long addr, void __iomem *portl, void __iomem *porth)
-{
-	gf_iowrite32(lower_32_bits(addr), portl);
-#ifdef CONFIG_64BIT
-	gf_iowrite32(upper_32_bits(addr), porth);
-#endif
-}
-
 static void do_rw_io(struct goldfish_tty *qtty, unsigned long address,
 		     size_t count, bool is_write)
 {
+	unsigned long irq_flags;
 	void __iomem *base = qtty->base;
 
-	guard(spinlock_irqsave)(&qtty->lock);
-
-	gf_write_addr(address, base + GOLDFISH_TTY_REG_DATA_PTR,
-		      base + GOLDFISH_TTY_REG_DATA_PTR_HIGH);
+	spin_lock_irqsave(&qtty->lock, irq_flags);
+	gf_write_ptr((void *)address, base + GOLDFISH_TTY_REG_DATA_PTR,
+		     base + GOLDFISH_TTY_REG_DATA_PTR_HIGH);
 	gf_iowrite32(count, base + GOLDFISH_TTY_REG_DATA_LEN);
 
 	if (is_write)
@@ -74,6 +66,8 @@ static void do_rw_io(struct goldfish_tty *qtty, unsigned long address,
 	else
 		gf_iowrite32(GOLDFISH_TTY_CMD_READ_BUFFER,
 		       base + GOLDFISH_TTY_REG_CMD);
+
+	spin_unlock_irqrestore(&qtty->lock, irq_flags);
 }
 
 static void goldfish_tty_rw(struct goldfish_tty *qtty, unsigned long addr,
@@ -415,7 +409,7 @@ static void goldfish_tty_remove(struct platform_device *pdev)
 {
 	struct goldfish_tty *qtty = platform_get_drvdata(pdev);
 
-	guard(mutex)(&goldfish_tty_lock);
+	mutex_lock(&goldfish_tty_lock);
 
 	unregister_console(&qtty->console);
 	tty_unregister_device(goldfish_tty_driver, qtty->console.index);
@@ -426,6 +420,7 @@ static void goldfish_tty_remove(struct platform_device *pdev)
 	goldfish_tty_current_line_count--;
 	if (goldfish_tty_current_line_count == 0)
 		goldfish_tty_delete_driver();
+	mutex_unlock(&goldfish_tty_lock);
 }
 
 #ifdef CONFIG_GOLDFISH_TTY_EARLY_CONSOLE

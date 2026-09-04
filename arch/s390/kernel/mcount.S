@@ -4,7 +4,6 @@
  *
  */
 
-#include <linux/cfi_types.h>
 #include <linux/linkage.h>
 #include <asm/asm-offsets.h>
 #include <asm/ftrace.h>
@@ -35,15 +34,9 @@
 
 	.section .kprobes.text, "ax"
 
-SYM_TYPED_FUNC_START(ftrace_stub)
+SYM_FUNC_START(ftrace_stub)
 	BR_EX	%r14
 SYM_FUNC_END(ftrace_stub)
-
-#ifdef CONFIG_FUNCTION_GRAPH_TRACER
-SYM_TYPED_FUNC_START(ftrace_stub_graph)
-	BR_EX	%r14
-SYM_FUNC_END(ftrace_stub_graph)
-#endif
 
 SYM_CODE_START(ftrace_stub_direct_tramp)
 	lgr	%r1, %r0

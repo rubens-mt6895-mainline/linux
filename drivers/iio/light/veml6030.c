@@ -921,7 +921,9 @@ static int veml6030_set_info(struct iio_dev *indio_dev)
 						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
 						indio_dev->name, indio_dev);
 		if (ret < 0)
-			return ret;
+			return dev_err_probe(&client->dev, ret,
+					     "irq %d request failed\n",
+					     client->irq);
 
 		indio_dev->info = &veml6030_info;
 	} else {

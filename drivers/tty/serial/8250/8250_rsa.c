@@ -19,33 +19,35 @@ static const struct uart_ops *core_port_base_ops;
 static int rsa8250_request_resource(struct uart_8250_port *up)
 {
 	struct uart_port *port = &up->port;
-	unsigned long start;
-	unsigned int size;
+	unsigned long start = UART_RSA_BASE << port->regshift;
+	unsigned int size = 8 << port->regshift;
 
-	if (!uart_iotype_io(port->iotype))
+	switch (port->iotype) {
+	case UPIO_HUB6:
+	case UPIO_PORT:
+		start += port->iobase;
+		if (!request_region(start, size, "serial-rsa"))
+			return -EBUSY;
+		return 0;
+	default:
 		return -EINVAL;
-
-	start = UART_RSA_BASE << port->regshift;
-	start += port->iobase;
-	size = 8 << port->regshift;
-
-	if (!request_region(start, size, "serial-rsa"))
-		return -EBUSY;
-	return 0;
+	}
 }
 
 static void rsa8250_release_resource(struct uart_8250_port *up)
 {
 	struct uart_port *port = &up->port;
-	unsigned long offset;
-	unsigned int size;
+	unsigned long offset = UART_RSA_BASE << port->regshift;
+	unsigned int size = 8 << port->regshift;
 
-	if (!uart_iotype_io(port->iotype))
-		return;
-
-	offset = UART_RSA_BASE << port->regshift;
-	size = 8 << port->regshift;
-	release_region(port->iobase + offset, size);
+	switch (port->iotype) {
+	case UPIO_HUB6:
+	case UPIO_PORT:
+		release_region(port->iobase + offset, size);
+		break;
+	default:
+		break;
+	}
 }
 
 static void univ8250_config_port(struct uart_port *port, int flags)

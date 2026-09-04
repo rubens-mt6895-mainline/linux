@@ -24,8 +24,11 @@ use crate::{
 };
 use core::{
     marker::PhantomData,
-    mem::offset_of,
-    ptr::NonNull, //
+    mem::{
+        offset_of,
+        MaybeUninit, //
+    },
+    ptr::NonNull,
 };
 
 /// An adapter for the registration of USB drivers.
@@ -60,7 +63,7 @@ unsafe impl<T: Driver> driver::RegistrationOps for Adapter<T> {
 
         // SAFETY: `udrv` is guaranteed to be a valid `DriverType`.
         to_result(unsafe {
-            bindings::usb_register_driver(udrv.get(), module.as_ptr(), name.as_char_ptr())
+            bindings::usb_register_driver(udrv.get(), module.0, name.as_char_ptr())
         })
     }
 
@@ -86,10 +89,7 @@ impl<T: Driver> Adapter<T> {
             // does not add additional invariants, so it's safe to transmute.
             let id = unsafe { &*id.cast::<DeviceId>() };
 
-            // SAFETY: `id` comes from `T::ID_TABLE` which is of type `IdArray<_, T::IdInfo>`. It
-            // can also come from dynamic IDs, which will ensure that `driver_data` exists in
-            // `T::ID_TABLE` or is 0.
-            let info = unsafe { id.info_unchecked_opt::<T::IdInfo>() };
+            let info = T::ID_TABLE.info(id.index());
             let data = T::probe(intf, id, info);
 
             let dev: &device::Device<device::CoreInternal<'_>> = intf.as_ref();
@@ -130,7 +130,8 @@ impl DeviceId {
             match_flags: bindings::USB_DEVICE_ID_MATCH_DEVICE as u16,
             idVendor: vendor,
             idProduct: product,
-            ..pin_init::zeroed()
+            // SAFETY: It is safe to use all zeroes for the other fields of `usb_device_id`.
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
         })
     }
 
@@ -142,7 +143,8 @@ impl DeviceId {
             idProduct: product,
             bcdDevice_lo: bcd_lo,
             bcdDevice_hi: bcd_hi,
-            ..pin_init::zeroed()
+            // SAFETY: It is safe to use all zeroes for the other fields of `usb_device_id`.
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
         })
     }
 
@@ -153,7 +155,8 @@ impl DeviceId {
             bDeviceClass: class,
             bDeviceSubClass: subclass,
             bDeviceProtocol: protocol,
-            ..pin_init::zeroed()
+            // SAFETY: It is safe to use all zeroes for the other fields of `usb_device_id`.
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
         })
     }
 
@@ -164,7 +167,8 @@ impl DeviceId {
             bInterfaceClass: class,
             bInterfaceSubClass: subclass,
             bInterfaceProtocol: protocol,
-            ..pin_init::zeroed()
+            // SAFETY: It is safe to use all zeroes for the other fields of `usb_device_id`.
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
         })
     }
 
@@ -176,7 +180,8 @@ impl DeviceId {
             idVendor: vendor,
             idProduct: product,
             bInterfaceClass: class,
-            ..pin_init::zeroed()
+            // SAFETY: It is safe to use all zeroes for the other fields of `usb_device_id`.
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
         })
     }
 
@@ -188,7 +193,8 @@ impl DeviceId {
             idVendor: vendor,
             idProduct: product,
             bInterfaceProtocol: protocol,
-            ..pin_init::zeroed()
+            // SAFETY: It is safe to use all zeroes for the other fields of `usb_device_id`.
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
         })
     }
 
@@ -200,7 +206,8 @@ impl DeviceId {
             idVendor: vendor,
             idProduct: product,
             bInterfaceNumber: number,
-            ..pin_init::zeroed()
+            // SAFETY: It is safe to use all zeroes for the other fields of `usb_device_id`.
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
         })
     }
 
@@ -220,7 +227,8 @@ impl DeviceId {
             bInterfaceClass: class,
             bInterfaceSubClass: subclass,
             bInterfaceProtocol: protocol,
-            ..pin_init::zeroed()
+            // SAFETY: It is safe to use all zeroes for the other fields of `usb_device_id`.
+            ..unsafe { MaybeUninit::zeroed().assume_init() }
         })
     }
 }
@@ -234,6 +242,10 @@ unsafe impl RawDeviceId for DeviceId {
 // SAFETY: `DRIVER_DATA_OFFSET` is the offset to the `driver_info` field.
 unsafe impl RawDeviceIdIndex for DeviceId {
     const DRIVER_DATA_OFFSET: usize = core::mem::offset_of!(bindings::usb_device_id, driver_info);
+
+    fn index(&self) -> usize {
+        self.0.driver_info
+    }
 }
 
 /// [`IdTable`](kernel::device_id::IdTable) type for USB.
@@ -242,8 +254,14 @@ pub type IdTable<T> = &'static dyn kernel::device_id::IdTable<DeviceId, T>;
 /// Create a USB `IdTable` with its alias for modpost.
 #[macro_export]
 macro_rules! usb_device_table {
-    ($($tt:tt)*) => {
-        $crate::module_device_table!("usb", $crate::usb::DeviceId, $($tt)*);
+    ($table_name:ident, $module_table_name:ident, $id_info_type: ty, $table_data: expr) => {
+        const $table_name: $crate::device_id::IdArray<
+            $crate::usb::DeviceId,
+            $id_info_type,
+            { $table_data.len() },
+        > = $crate::device_id::IdArray::new($table_data);
+
+        $crate::module_device_table!("usb", $module_table_name, $table_name);
     };
 }
 
@@ -259,6 +277,7 @@ macro_rules! usb_device_table {
 ///
 /// kernel::usb_device_table!(
 ///     USB_TABLE,
+///     MODULE_USB_TABLE,
 ///     <MyDriver as usb::Driver>::IdInfo,
 ///     [
 ///         (usb::DeviceId::from_id(0x1234, 0x5678), ()),
@@ -274,7 +293,7 @@ macro_rules! usb_device_table {
 ///     fn probe<'bound>(
 ///         _interface: &'bound usb::Interface<Core<'_>>,
 ///         _id: &usb::DeviceId,
-///         _info: Option<&'bound Self::IdInfo>,
+///         _info: &'bound Self::IdInfo,
 ///     ) -> impl PinInit<Self::Data<'bound>, Error> + 'bound {
 ///         Err(ENODEV)
 ///     }
@@ -303,7 +322,7 @@ pub trait Driver {
     fn probe<'bound>(
         interface: &'bound Interface<device::Core<'_>>,
         id: &DeviceId,
-        id_info: Option<&'bound Self::IdInfo>,
+        id_info: &'bound Self::IdInfo,
     ) -> impl PinInit<Self::Data<'bound>, Error> + 'bound;
 
     /// USB driver disconnect.
@@ -374,7 +393,6 @@ impl<Ctx: device::DeviceContext> AsRef<Device> for Interface<Ctx> {
 
 // SAFETY: Instances of `Interface` are always reference-counted.
 unsafe impl AlwaysRefCounted for Interface {
-    #[inline]
     fn inc_ref(&self) {
         // SAFETY: The invariants of `Interface` guarantee that `self.as_raw()`
         // returns a valid `struct usb_interface` pointer, for which we will
@@ -382,7 +400,6 @@ unsafe impl AlwaysRefCounted for Interface {
         unsafe { bindings::usb_get_intf(self.as_raw()) };
     }
 
-    #[inline]
     unsafe fn dec_ref(obj: NonNull<Self>) {
         // SAFETY: The safety requirements guarantee that the refcount is non-zero.
         unsafe { bindings::usb_put_intf(obj.cast().as_ptr()) }
@@ -427,7 +444,6 @@ kernel::impl_device_context_into_aref!(Device);
 
 // SAFETY: Instances of `Device` are always reference-counted.
 unsafe impl AlwaysRefCounted for Device {
-    #[inline]
     fn inc_ref(&self) {
         // SAFETY: The invariants of `Device` guarantee that `self.as_raw()`
         // returns a valid `struct usb_device` pointer, for which we will
@@ -435,7 +451,6 @@ unsafe impl AlwaysRefCounted for Device {
         unsafe { bindings::usb_get_dev(self.as_raw()) };
     }
 
-    #[inline]
     unsafe fn dec_ref(obj: NonNull<Self>) {
         // SAFETY: The safety requirements guarantee that the refcount is non-zero.
         unsafe { bindings::usb_put_dev(obj.cast().as_ptr()) }

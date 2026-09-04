@@ -677,7 +677,11 @@ int hidma_ll_setup(struct hidma_lldev *lldev)
 	/* configure interrupts */
 	hidma_ll_setup_irq(lldev, lldev->msi_support);
 
-	return hidma_ll_enable(lldev);
+	rc = hidma_ll_enable(lldev);
+	if (rc)
+		return rc;
+
+	return rc;
 }
 
 void hidma_ll_setup_irq(struct hidma_lldev *lldev, bool msi)

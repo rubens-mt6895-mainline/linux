@@ -887,7 +887,16 @@ static int phmac_do_one_request(struct crypto_engine *engine, void *areq)
 	case OP_FINUP:
 		rc = phmac_kmac_update(req, true);
 		if (rc == -EKEYEXPIRED) {
-			return pkey_handle_expired();
+			/*
+			 * Protected key expired, conversion is in process.
+			 * Trigger a re-schedule of this request by returning
+			 * -ENOSPC ("hardware queue full") to the crypto engine.
+			 * To avoid immediately re-invocation of this callback,
+			 * tell scheduler to voluntarily give up the CPU here.
+			 */
+			pr_debug("rescheduling request\n");
+			cond_resched();
+			return -ENOSPC;
 		} else if (rc) {
 			hwh_advance(hwh, rc);
 			goto out;
@@ -898,8 +907,18 @@ static int phmac_do_one_request(struct crypto_engine *engine, void *areq)
 		fallthrough;
 	case OP_FINAL:
 		rc = phmac_kmac_final(req, true);
-		if (rc == -EKEYEXPIRED)
-			return pkey_handle_expired();
+		if (rc == -EKEYEXPIRED) {
+			/*
+			 * Protected key expired, conversion is in process.
+			 * Trigger a re-schedule of this request by returning
+			 * -ENOSPC ("hardware queue full") to the crypto engine.
+			 * To avoid immediately re-invocation of this callback,
+			 * tell scheduler to voluntarily give up the CPU here.
+			 */
+			pr_debug("rescheduling request\n");
+			cond_resched();
+			return -ENOSPC;
+		}
 		break;
 	default:
 		/* unknown/unsupported/unimplemented asynch op */

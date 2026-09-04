@@ -1102,8 +1102,10 @@ static int exynos_tmu_probe(struct platform_device *pdev)
 					IRQF_TRIGGER_RISING
 						| IRQF_SHARED | IRQF_ONESHOT,
 					dev_name(dev), data);
-	if (ret)
+	if (ret) {
+		dev_err(dev, "Failed to request irq: %d\n", data->irq);
 		goto err_sclk;
+	}
 
 	exynos_tmu_control(pdev, true);
 	return 0;

@@ -8,7 +8,6 @@
 #include <linux/delay.h>
 #include <linux/scatterlist.h>
 
-#include "page_alloc.h"
 #include "page_reporting.h"
 #include "internal.h"
 
@@ -48,11 +47,7 @@ MODULE_PARM_DESC(page_reporting_order, "Set page reporting order");
  */
 EXPORT_SYMBOL_GPL(page_reporting_order);
 
-static unsigned int page_reporting_delay_ms = 2 * MSEC_PER_SEC;
-module_param(page_reporting_delay_ms, uint, 0644);
-MODULE_PARM_DESC(page_reporting_delay_ms,
-		 "Set page reporting delay in milliseconds");
-
+#define PAGE_REPORTING_DELAY	(2 * HZ)
 static struct page_reporting_dev_info __rcu *pr_dev_info __read_mostly;
 
 enum {
@@ -60,13 +55,6 @@ enum {
 	PAGE_REPORTING_REQUESTED,
 	PAGE_REPORTING_ACTIVE
 };
-
-/* schedule work for page reporting */
-static void page_reporting_schedule_work(struct page_reporting_dev_info *prdev)
-{
-	queue_delayed_work(system_freezable_wq, &prdev->work,
-			   msecs_to_jiffies(page_reporting_delay_ms));
-}
 
 /* request page reporting */
 static void
@@ -88,10 +76,12 @@ __page_reporting_request(struct page_reporting_dev_info *prdev)
 		return;
 
 	/*
-	 * Delay the start of work to allow a sizable queue to build.
-	 * We limit this based on page_reporting_delay_ms.
+	 * Delay the start of work to allow a sizable queue to build. For
+	 * now we are limiting this to running no more than once every
+	 * couple of seconds.
 	 */
-	page_reporting_schedule_work(prdev);
+	queue_delayed_work(system_freezable_wq, &prdev->work,
+			   PAGE_REPORTING_DELAY);
 }
 
 /* notify prdev of free page reporting request */
@@ -346,12 +336,13 @@ static void page_reporting_process(struct work_struct *work)
 err_out:
 	/*
 	 * If the state has reverted back to requested then there may be
-	 * additional pages to be processed. We will defer by
-	 * page_reporting_delay_ms to allow more pages to accumulate.
+	 * additional pages to be processed. We will defer for 2s to allow
+	 * more pages to accumulate.
 	 */
 	state = atomic_cmpxchg(&prdev->state, state, PAGE_REPORTING_IDLE);
 	if (state == PAGE_REPORTING_REQUESTED)
-		page_reporting_schedule_work(prdev);
+		queue_delayed_work(system_freezable_wq, &prdev->work,
+				   PAGE_REPORTING_DELAY);
 }
 
 static DEFINE_MUTEX(page_reporting_mutex);

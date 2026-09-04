@@ -228,8 +228,10 @@ static int adc084s021_probe(struct spi_device *spi)
 	ret = devm_iio_triggered_buffer_setup(&spi->dev, indio_dev, NULL,
 					    adc084s021_buffer_trigger_handler,
 					    &adc084s021_buffer_setup_ops);
-	if (ret)
-		return dev_err_probe(&spi->dev, ret, "Failed to setup triggered buffer\n");
+	if (ret) {
+		dev_err(&spi->dev, "Failed to setup triggered buffer\n");
+		return ret;
+	}
 
 	return devm_iio_device_register(&spi->dev, indio_dev);
 }
@@ -241,7 +243,7 @@ static const struct of_device_id adc084s021_of_match[] = {
 MODULE_DEVICE_TABLE(of, adc084s021_of_match);
 
 static const struct spi_device_id adc084s021_id[] = {
-	{ .name = ADC084S021_DRIVER_NAME },
+	{ ADC084S021_DRIVER_NAME, 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, adc084s021_id);

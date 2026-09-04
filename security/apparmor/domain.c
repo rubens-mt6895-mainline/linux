@@ -24,7 +24,6 @@
 #include "include/domain.h"
 #include "include/file.h"
 #include "include/ipc.h"
-#include "include/lib.h"
 #include "include/match.h"
 #include "include/path.h"
 #include "include/policy.h"
@@ -91,8 +90,8 @@ out:
  * If a subns profile is not to be matched should be prescreened with
  * visibility test.
  */
-static inline aa_state_t match_component(const struct aa_profile *profile,
-					 const struct aa_profile *tp,
+static inline aa_state_t match_component(struct aa_profile *profile,
+					 struct aa_profile *tp,
 					 bool stack, aa_state_t state)
 {
 	struct aa_ruleset *rules = profile->label.rules[0];
@@ -127,7 +126,7 @@ static inline aa_state_t match_component(const struct aa_profile *profile,
  * @perms should be preinitialized with allperms OR a previous permission
  *        check to be stacked.
  */
-static int label_compound_match(const struct aa_profile *profile,
+static int label_compound_match(struct aa_profile *profile,
 				struct aa_label *label, bool stack,
 				aa_state_t state, bool inview, u32 request,
 				struct aa_perms *perms)
@@ -189,7 +188,7 @@ fail:
  * @perms should be preinitialized with allperms OR a previous permission
  *        check to be stacked.
  */
-static int label_components_match(const struct aa_profile *profile,
+static int label_components_match(struct aa_profile *profile,
 				  struct aa_label *label, bool stack,
 				  aa_state_t start, bool inview, u32 request,
 				  struct aa_perms *perms)
@@ -253,7 +252,7 @@ fail:
  *
  * Returns: the state the match finished in, may be the none matching state
  */
-static int label_match(const struct aa_profile *profile, struct aa_label *label,
+static int label_match(struct aa_profile *profile, struct aa_label *label,
 		       bool stack, aa_state_t state, bool inview, u32 request,
 		       struct aa_perms *perms)
 {
@@ -287,7 +286,7 @@ static int label_match(const struct aa_profile *profile, struct aa_label *label,
  * currently only matches full label A//&B//&C or individual components A, B, C
  * not arbitrary combinations. Eg. A//&B, C
  */
-static int change_profile_perms(const struct aa_profile *profile,
+static int change_profile_perms(struct aa_profile *profile,
 				struct aa_label *target, bool stack,
 				u32 request, aa_state_t start,
 				struct aa_perms *perms)
@@ -304,31 +303,28 @@ static int change_profile_perms(const struct aa_profile *profile,
 
 /**
  * aa_xattrs_match - check whether a file matches the xattrs defined in profile
- * @path: path for file being matched (NOT NULL)
+ * @bprm: binprm struct for the process to validate
  * @profile: profile to match against (NOT NULL)
  * @state: state to start match in
  *
  * Returns: number of extended attributes that matched, or < 0 on error
  */
-static int aa_xattrs_match(const struct path *path,
-			   const struct aa_profile *profile, aa_state_t state)
+static int aa_xattrs_match(const struct linux_binprm *bprm,
+			   struct aa_profile *profile, aa_state_t state)
 {
-	AA_BUG(!path);
-	AA_BUG(!profile);
-
 	int i;
 	struct dentry *d;
 	char *value = NULL;
-	const struct aa_attachment *attach = &profile->attach;
+	struct aa_attachment *attach = &profile->attach;
 	int size, value_size = 0, ret = attach->xattr_count;
 
-	if (!attach->xattr_count)
+	if (!bprm || !attach->xattr_count)
 		return 0;
 	might_sleep();
 
 	/* transition from exec match to xattr set */
 	state = aa_dfa_outofband_transition(attach->xmatch->dfa, state);
-	d = path->dentry;
+	d = bprm->file->f_path.dentry;
 
 	for (i = 0; i < attach->xattr_count; i++) {
 		size = vfs_getxattr_alloc(&nop_mnt_idmap, d, attach->xattrs[i],
@@ -376,7 +372,7 @@ out:
 
 /**
  * find_attach - do attachment search for unconfined processes
- * @path: path of file in question (NOT NULL)
+ * @bprm: binprm structure of transitioning task
  * @ns: the current namespace  (NOT NULL)
  * @head: profile list to walk  (NOT NULL)
  * @name: to match against  (NOT NULL)
@@ -391,7 +387,7 @@ out:
  *
  * Returns: label or NULL if no match found
  */
-static struct aa_label *find_attach(const struct path *path,
+static struct aa_label *find_attach(const struct linux_binprm *bprm,
 				    struct aa_ns *ns, struct list_head *head,
 				    const char *name, const char **info)
 {
@@ -399,7 +395,6 @@ static struct aa_label *find_attach(const struct path *path,
 	bool conflict = false;
 	struct aa_profile *profile, *candidate = NULL;
 
-	AA_BUG(!path);
 	AA_BUG(!name);
 	AA_BUG(!head);
 
@@ -439,13 +434,13 @@ restart:
 				if (count < candidate_len)
 					continue;
 
-				if (attach->xattr_count) {
+				if (bprm && attach->xattr_count) {
 					long rev = READ_ONCE(ns->revision);
 
 					if (!aa_get_profile_not0(profile))
 						goto restart;
 					rcu_read_unlock();
-					ret = aa_xattrs_match(path, profile,
+					ret = aa_xattrs_match(bprm, profile,
 							      state);
 					rcu_read_lock();
 					aa_put_profile(profile);
@@ -561,7 +556,7 @@ struct aa_label *x_table_lookup(struct aa_profile *profile, u32 xindex,
 /**
  * x_to_label - get target label for a given xindex
  * @profile: current profile  (NOT NULL)
- * @path: path of file in question
+ * @bprm: binprm structure of transitioning task
  * @name: name to lookup (NOT NULL)
  * @xindex: index into x transition table
  * @lookupname: returns: name used in lookup if one was specified (NOT NULL)
@@ -572,7 +567,7 @@ struct aa_label *x_table_lookup(struct aa_profile *profile, u32 xindex,
  * Returns: refcounted label or NULL if not found available
  */
 static struct aa_label *x_to_label(struct aa_profile *profile,
-				   const struct path *path,
+				   const struct linux_binprm *bprm,
 				   const char *name, u32 xindex,
 				   const char **lookupname,
 				   const char **info)
@@ -603,11 +598,11 @@ static struct aa_label *x_to_label(struct aa_profile *profile,
 	case AA_X_NAME:
 		if (xindex & AA_X_CHILD)
 			/* released by caller */
-			new = find_attach(path, ns, &profile->base.profiles,
+			new = find_attach(bprm, ns, &profile->base.profiles,
 					  name, info);
 		else
 			/* released by caller */
-			new = find_attach(path, ns, &ns->base.profiles,
+			new = find_attach(bprm, ns, &ns->base.profiles,
 					  name, info);
 		*lookupname = name;
 		break;
@@ -695,7 +690,7 @@ static struct aa_label *profile_transition(const struct cred *subj_cred,
 	}
 
 	if (profile_unconfined(profile)) {
-		new = find_attach(&bprm->file->f_path, profile->ns,
+		new = find_attach(bprm, profile->ns,
 				  &profile->ns->base.profiles, name, &info);
 		/* info set -> something unusual that we should report
 		 * Currently this is only conflicting attachments, but other
@@ -725,8 +720,8 @@ static struct aa_label *profile_transition(const struct cred *subj_cred,
 	state = aa_str_perms(rules->file, state, name, cond, &perms);
 	if (perms.allow & MAY_EXEC) {
 		/* exec permission determine how to transition */
-		new = x_to_label(profile, &bprm->file->f_path, name,
-				 perms.xindex, &target, &info);
+		new = x_to_label(profile, bprm, name, perms.xindex, &target,
+				 &info);
 		if (new && new->proxy == profile->label.proxy && info) {
 			/* Force audit on conflicting attachment fallback
 			 * Because perms is never used again after this audit
@@ -879,52 +874,6 @@ static struct aa_label *label_merge_wrap(struct aa_label *a, struct aa_label *b,
 	return label;
 }
 
-static bool is_profile_priv_restricted_to_stack(const struct cred *subj_cred,
-						struct aa_profile *profile)
-{
-	if (profile_unconfined(profile) && profile == profile->ns->unconfined &&
-	    aa_unprivileged_unconfined_restricted &&
-	    /* cap_capable returns false (0) if true, hence true here means
-	     * doesn't have capability and the stack will be restricted
-	     */
-	    cap_capable(current_cred(), &init_user_ns, CAP_MAC_OVERRIDE,
-			CAP_OPT_NOAUDIT))
-		return true;
-	return false;
-}
-
-static const char *stack_msg = "change_profile unprivileged unconfined converted to stacking";
-
-static struct aa_label *priv_restricted_transition(const struct cred *subj_cred,
-						   struct aa_profile *profile,
-						   const char *op, u32 request,
-						   const char *name,
-						   struct aa_label *transition,
-						   gfp_t gfp)
-{
-	if (!is_profile_priv_restricted_to_stack(subj_cred, profile))
-		return aa_get_newest_label(transition);
-
-	/* transition allowed but only via stack */
-	struct aa_label *target = label_merge_wrap(&profile->label,
-						      transition, gfp);
-	if (IS_ERR_OR_NULL(target))
-		return target;
-
-	/* doing this here is less than optimal but good enough until the
-	 * fs mediation rework lands
-	 */
-	struct aa_perms perms = {
-		.allow = request,
-		.audit = request,
-	};
-	aa_audit_file(subj_cred, profile, &perms, op,
-		      request, name, NULL, target,
-		      subj_cred->euid, stack_msg, 0);
-
-	return target;
-}
-
 static struct aa_label *handle_onexec(const struct cred *subj_cred,
 				      struct aa_label *label,
 				      struct aa_label *onexec, bool stack,
@@ -953,10 +902,7 @@ static struct aa_label *handle_onexec(const struct cred *subj_cred,
 	new = fn_label_build_in_scope(label, profile, GFP_KERNEL,
 			stack ? label_merge_wrap(&profile->label, onexec,
 						 GFP_KERNEL)
-			      : priv_restricted_transition(subj_cred, profile,
-						OP_CHANGE_ONEXEC, AA_MAY_ONEXEC,
-						bprm->filename, onexec,
-						GFP_KERNEL),
+			      : aa_get_newest_label(onexec),
 			profile_transition(subj_cred, profile, bprm,
 					   buffer, cond, unsafe));
 	AA_BUG(!new);
@@ -1138,8 +1084,8 @@ static struct aa_label *build_change_hat(const struct cred *subj_cred,
 	if (!hat) {
 		error = -ENOENT;
 		if (COMPLAIN_MODE(profile)) {
-			hat = __aa_new_learning_profile(profile, true, name,
-							GFP_KERNEL);
+			hat = aa_new_learning_profile(profile, true, name,
+						      GFP_KERNEL);
 			if (!hat) {
 				info = "failed null profile create";
 				error = -ENOMEM;
@@ -1177,7 +1123,6 @@ static struct aa_label *change_hat(const struct cred *subj_cred,
 	bool sibling = false;
 	const char *name, *info = NULL;
 	int i, error;
-	bool needput = false;
 
 	AA_BUG(!label);
 	AA_BUG(!hats);
@@ -1190,6 +1135,7 @@ static struct aa_label *change_hat(const struct cred *subj_cred,
 	 * the profiles and label, we can rely on the namespaces being live
 	 * and avoid incrementing their refcounts while grabbing the lock.
 	 */
+	label = aa_get_label(label);
 	ns = labels_ns(label);
 
 retry:
@@ -1197,19 +1143,15 @@ retry:
 	if (label_is_stale(label)) {
 		new = aa_get_newest_label(label);
 		new_ns = labels_ns(new);
-
-		if (needput)
-			/* aa_put_label() is safe to call when under lock */
-			aa_put_label(label);
-		label = new;
-		needput = true;
-		/* check if replaced with label in parent ns, and lock there */
 		if (new_ns != ns) {
+			aa_put_label(new);
 			mutex_unlock(&ns->lock);
 			ns = new_ns;
-			/* retry will bottom out at the root of the tree */
+			label = new;
 			goto retry;
 		}
+		aa_put_label(label);
+		label = new;
 	}
 
 	if (PROFILE_IS_HAT(labels_profile(label)))
@@ -1220,8 +1162,7 @@ retry:
 		name = hats[i];
 		label_for_each_in_scope(it, labels_ns(label), label, profile) {
 			if (sibling && PROFILE_IS_HAT(profile)) {
-				root = aa_get_profile(rcu_dereference_protected(profile->parent,
-						      mutex_is_locked(&ns->lock)));
+				root = aa_get_profile(profile->parent);
 			} else if (!sibling && !PROFILE_IS_HAT(profile)) {
 				root = aa_get_profile(profile);
 			} else {	/* conflicting change type */
@@ -1282,8 +1223,6 @@ fail:
 		}
 	}
 	mutex_unlock(&ns->lock);
-	if (needput)
-		aa_put_label(label);
 	return ERR_PTR(error);
 
 build:
@@ -1294,8 +1233,7 @@ build:
 	mutex_unlock(&ns->lock);
 	AA_BUG(!new);
 	/* return new label or error ptr */
-	if (needput)
-		aa_put_label(label);
+
 	return new;
 }
 
@@ -1468,6 +1406,8 @@ static int change_profile_perms_wrapper(const char *op, const char *name,
 	return error;
 }
 
+static const char *stack_msg = "change_profile unprivileged unconfined converted to stacking";
+
 /**
  * aa_change_profile - perform a one-way profile transition
  * @fqname: name of profile may include namespace (NOT NULL)
@@ -1525,6 +1465,28 @@ int aa_change_profile(const char *fqname, int flags)
 			op = OP_STACK;
 		else
 			op = OP_CHANGE_PROFILE;
+	}
+
+	/* This should move to a per profile test. Requires pushing build
+	 * into callback
+	 */
+	if (!stack && unconfined(label) &&
+	    label == &labels_ns(label)->unconfined->label &&
+	    aa_unprivileged_unconfined_restricted &&
+	    /* TODO: refactor so this check is a fn */
+	    cap_capable(current_cred(), &init_user_ns, CAP_MAC_OVERRIDE,
+			CAP_OPT_NOAUDIT)) {
+		/* regardless of the request in this case apparmor
+		 * stacks against unconfined so admin set policy can't be
+		 * by-passed
+		 */
+		stack = true;
+		perms.audit = request;
+		(void) fn_for_each_in_scope(label, profile,
+				aa_audit_file(subj_cred, profile, &perms, op,
+					      request, auditname, NULL, target,
+					      GLOBAL_ROOT_UID, stack_msg, 0));
+		perms.audit = 0;
 	}
 
 	if (*fqname == '&') {
@@ -1597,10 +1559,7 @@ check:
 	/* stacking is always a subset, so only check the nonstack case */
 	if (!stack) {
 		new = fn_label_build_in_scope(label, profile, GFP_KERNEL,
-				priv_restricted_transition(subj_cred, profile,
-							   op, request,
-							   auditname, target,
-							   GFP_KERNEL),
+					   aa_get_label(target),
 					   aa_get_label(&profile->label));
 		AA_BUG(!new);
 		if (IS_ERR(new))

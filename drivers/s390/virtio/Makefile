@@ -3,6 +3,4 @@
 #
 # Copyright IBM Corp. 2008
 
-CONTEXT_ANALYSIS := y
-
 obj-$(CONFIG_S390_GUEST) += virtio_ccw.o

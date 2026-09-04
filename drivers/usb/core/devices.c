@@ -37,7 +37,6 @@
  */
 
 #include <linux/fs.h>
-#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/gfp.h>
 #include <linux/usb.h>
@@ -409,7 +408,7 @@ static ssize_t usb_device_dump(char __user **buffer, size_t *nbytes,
 		return 0;
 	/* allocate 2^1 pages = 8K (on i386);
 	 * should be more than enough for one device */
-	pages_start = kmalloc(PAGE_SIZE << 1, GFP_NOIO);
+	pages_start = (char *)__get_free_pages(GFP_NOIO, 1);
 	if (!pages_start)
 		return -ENOMEM;
 
@@ -480,7 +479,7 @@ static ssize_t usb_device_dump(char __user **buffer, size_t *nbytes,
 		if (length > *nbytes)
 			length = *nbytes;
 		if (copy_to_user(*buffer, pages_start + *skip_bytes, length)) {
-			kfree(pages_start);
+			free_pages((unsigned long)pages_start, 1);
 			return -EFAULT;
 		}
 		*nbytes -= length;
@@ -491,7 +490,7 @@ static ssize_t usb_device_dump(char __user **buffer, size_t *nbytes,
 	} else
 		*skip_bytes -= length;
 
-	kfree(pages_start);
+	free_pages((unsigned long)pages_start, 1);
 
 	/* Now look at all of this device's children. */
 	usb_hub_for_each_child(usbdev, chix, childdev) {

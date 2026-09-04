@@ -20,7 +20,7 @@ allOf:
 properties:
   compatible:
     enum:
-      - st,stmpe610
+      - st,stmpe601
       - st,stmpe801
       - st,stmpe811
       - st,stmpe1600

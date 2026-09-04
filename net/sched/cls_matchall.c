@@ -189,7 +189,7 @@ static int mall_change(struct net *net, struct sk_buff *in_skb,
 			return -EINVAL;
 	}
 
-	new = kzalloc_obj(*new, GFP_KERNEL_ACCOUNT);
+	new = kzalloc_obj(*new);
 	if (!new)
 		return -ENOBUFS;
 
@@ -201,7 +201,7 @@ static int mall_change(struct net *net, struct sk_buff *in_skb,
 		handle = 1;
 	new->handle = handle;
 	new->flags = userflags;
-	new->pf = alloc_percpu_gfp(struct tc_matchall_pcnt, GFP_KERNEL_ACCOUNT);
+	new->pf = alloc_percpu(struct tc_matchall_pcnt);
 	if (!new->pf) {
 		err = -ENOMEM;
 		goto err_alloc_percpu;

@@ -93,13 +93,12 @@ SYSCALL_DEFINE0(ni_syscall)
 	return -ENOSYS;
 }
 
-void noinstr __do_syscall(struct pt_regs *regs, unsigned long flags)
+void noinstr __do_syscall(struct pt_regs *regs, int per_trap)
 {
 	unsigned long nr;
-	bool permit;
 
-	enter_from_user_mode_randomize_stack(regs);
-
+	enter_from_user_mode(regs);
+	add_random_kstack_offset();
 	regs->psw = get_lowcore()->svc_old_psw;
 	regs->int_code = get_lowcore()->svc_int_code;
 	update_timer_sys();
@@ -107,7 +106,7 @@ void noinstr __do_syscall(struct pt_regs *regs, unsigned long flags)
 		current->thread.last_break = regs->last_break;
 	local_irq_enable();
 	regs->orig_gpr2 = regs->gprs[2];
-	if (unlikely(flags & SYSCALL_FLAG_PER_TRAP))
+	if (unlikely(per_trap))
 		set_thread_flag(TIF_PER_TRAP);
 	regs->flags = 0;
 	set_pt_regs_flag(regs, PIF_SYSCALL);
@@ -122,9 +121,7 @@ void noinstr __do_syscall(struct pt_regs *regs, unsigned long flags)
 		regs->psw.addr = current->restart_block.arch_data;
 		current->restart_block.arch_data = 1;
 	}
-
-	permit = syscall_enter_from_user_mode_work(regs, &nr);
-
+	nr = syscall_enter_from_user_mode_work(regs, nr);
 	/*
 	 * In the s390 ptrace ABI, both the syscall number and the return value
 	 * use gpr2. However, userspace puts the syscall number either in the
@@ -132,7 +129,7 @@ void noinstr __do_syscall(struct pt_regs *regs, unsigned long flags)
 	 * work, the ptrace code sets PIF_SYSCALL_RET_SET, which is checked here
 	 * and if set, the syscall will be skipped.
 	 */
-	if (unlikely(test_and_clear_pt_regs_flag(regs, PIF_SYSCALL_RET_SET) || !permit))
+	if (unlikely(test_and_clear_pt_regs_flag(regs, PIF_SYSCALL_RET_SET)))
 		goto out;
 	regs->gprs[2] = -ENOSYS;
 	if (likely(nr < NR_syscalls)) {

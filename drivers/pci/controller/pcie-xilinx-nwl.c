@@ -140,6 +140,11 @@
 #define PCIE_PHY_LINKUP_BIT		BIT(0)
 #define PHY_RDY_LINKUP_BIT		BIT(1)
 
+/* Parameters for the waiting for link up routine */
+#define LINK_WAIT_MAX_RETRIES          10
+#define LINK_WAIT_USLEEP_MIN           90000
+#define LINK_WAIT_USLEEP_MAX           100000
+
 struct nwl_msi {			/* MSI information */
 	DECLARE_BITMAP(bitmap, INT_PCI_MSI_NR);
 	struct irq_domain *dev_domain;
@@ -198,10 +203,10 @@ static int nwl_wait_for_link(struct nwl_pcie *pcie)
 	int retries;
 
 	/* check if the link is up or not */
-	for (retries = 0; retries < PCIE_LINK_WAIT_MAX_RETRIES; retries++) {
+	for (retries = 0; retries < LINK_WAIT_MAX_RETRIES; retries++) {
 		if (nwl_phy_link_up(pcie))
 			return 0;
-		msleep(PCIE_LINK_WAIT_SLEEP_MS);
+		usleep_range(LINK_WAIT_USLEEP_MIN, LINK_WAIT_USLEEP_MAX);
 	}
 
 	dev_err(dev, "PHY link never came up\n");

@@ -4,14 +4,13 @@
 $id: http://devicetree.org/schemas/usb/ti,tps6598x.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: Texas Instruments Type-C port switch and USB Power Delivery controllers
+title: Texas Instruments 6598x Type-C Port Switch and Power Delivery controller
 
 maintainers:
   - Bryan O'Donoghue <bryan.odonoghue@linaro.org>
 
 description: |
-  Texas Instruments 6598x and 66993 Type-C Port Switch and Power Delivery
-  controller.
+  Texas Instruments 6598x Type-C Port Switch and Power Delivery controller
 
   A variant of this controller known as Apple CD321x or Apple ACE is also
   present on hardware with Apple SoCs such as the M1.
@@ -20,7 +19,6 @@ properties:
   compatible:
     enum:
       - ti,tps6598x
-      - ti,tps66993
       - apple,cd321x
       - ti,tps25750
 

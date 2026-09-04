@@ -171,7 +171,8 @@ static int hv_cpu_init(unsigned int cpu)
 	}
 
 	/* Allow Hyper-V stimer vector to be injected from Hypervisor. */
-	apic_update_vector(cpu, HYPERV_STIMER0_VECTOR, true);
+	if (ms_hyperv.misc_features & HV_STIMER_DIRECT_MODE_AVAILABLE)
+		apic_update_vector(cpu, HYPERV_STIMER0_VECTOR, true);
 
 	return hyperv_init_ghcb();
 }
@@ -280,7 +281,8 @@ static int hv_cpu_die(unsigned int cpu)
 		*ghcb_va = NULL;
 	}
 
-	apic_update_vector(cpu, HYPERV_STIMER0_VECTOR, false);
+	if (ms_hyperv.misc_features & HV_STIMER_DIRECT_MODE_AVAILABLE)
+		apic_update_vector(cpu, HYPERV_STIMER0_VECTOR, false);
 
 	hv_common_cpu_die(cpu);
 
@@ -423,18 +425,15 @@ static void (* __initdata old_setup_percpu_clockev)(void);
 
 static void __init hv_stimer_setup_percpu_clockev(void)
 {
-	int ret;
-
 	/*
-	 * Continue afters errors in setting up stimer clockevents
+	 * Ignore any errors in setting up stimer clockevents
 	 * as we can run with the LAPIC timer as a fallback.
 	 */
-	ret = hv_stimer_alloc(false);
-	if (ret)
-		pr_warn("stimer setup failed with error %d\n", ret);
+	(void)hv_stimer_alloc(false);
 
 	/*
-	 * Still register the LAPIC timer to allows users
+	 * Still register the LAPIC timer, because the direct-mode STIMER is
+	 * not supported by old versions of Hyper-V. This also allows users
 	 * to switch to LAPIC timer via /sys, if they want to.
 	 */
 	if (old_setup_percpu_clockev)

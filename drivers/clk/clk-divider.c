@@ -15,7 +15,6 @@
 #include <linux/err.h>
 #include <linux/string.h>
 #include <linux/log2.h>
-#include <linux/overflow.h>
 
 /*
  * DOC: basic adjustable divider clock that cannot gate
@@ -302,7 +301,6 @@ static int clk_divider_bestdiv(struct clk_hw *hw, struct clk_hw *parent,
 	int i, bestdiv = 0;
 	unsigned long parent_rate, best = 0, now, maxdiv;
 	unsigned long parent_rate_saved = *best_parent_rate;
-	unsigned long target_parent_rate;
 
 	if (!rate)
 		rate = 1;
@@ -317,11 +315,15 @@ static int clk_divider_bestdiv(struct clk_hw *hw, struct clk_hw *parent,
 		return bestdiv;
 	}
 
+	/*
+	 * The maximum divider we can use without overflowing
+	 * unsigned long in rate * i below
+	 */
+	maxdiv = min(ULONG_MAX / rate, maxdiv);
+
 	for (i = _next_div(table, 0, flags); i <= maxdiv;
 					     i = _next_div(table, i, flags)) {
-		bool overflow = check_mul_overflow(rate, (unsigned long)i, &target_parent_rate);
-
-		if (!overflow && target_parent_rate == parent_rate_saved) {
+		if (rate * i == parent_rate_saved) {
 			/*
 			 * It's the most ideal case if the requested rate can be
 			 * divided from parent clock without needing to change
@@ -330,24 +332,13 @@ static int clk_divider_bestdiv(struct clk_hw *hw, struct clk_hw *parent,
 			*best_parent_rate = parent_rate_saved;
 			return i;
 		}
-		/*
-		 * Clamp target_parent_rate to ULONG_MAX on overflow. The true
-		 * required parent rate exceeds what can be represented, so ask
-		 * the parent for the highest rate it can produce. There is no
-		 * point continuing the loop past this since larger dividers
-		 * only move further from the requested rate.
-		 */
-		if (overflow)
-			target_parent_rate = ULONG_MAX;
-		parent_rate = clk_hw_round_rate(parent, target_parent_rate);
+		parent_rate = clk_hw_round_rate(parent, rate * i);
 		now = DIV_ROUND_UP_ULL((u64)parent_rate, i);
 		if (_is_best_div(rate, now, best, flags)) {
 			bestdiv = i;
 			best = now;
 			*best_parent_rate = parent_rate;
 		}
-		if (overflow)
-			break;
 	}
 
 	if (!bestdiv) {

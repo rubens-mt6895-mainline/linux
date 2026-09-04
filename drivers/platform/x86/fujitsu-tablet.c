@@ -22,6 +22,8 @@
 
 #define MODULENAME "fujitsu-tablet"
 
+#define ACPI_FUJITSU_CLASS "fujitsu"
+
 #define INVERT_TABLET_MODE_BIT      0x01
 #define INVERT_DOCK_STATE_BIT       0x02
 #define FORCE_TABLET_MODE_IF_UNDOCK 0x04
@@ -158,7 +160,6 @@ static struct {
 	struct fujitsu_config config;
 	unsigned long prev_keymask;
 
-	char name[17];
 	char phys[21];
 
 	int irq;
@@ -457,10 +458,14 @@ static int acpi_fujitsu_probe(struct platform_device *pdev)
 	if (ACPI_FAILURE(status) || !fujitsu.irq || !fujitsu.io_base)
 		return -ENODEV;
 
-	scnprintf(fujitsu.name, sizeof(fujitsu.name), "Fujitsu %s", acpi_device_hid(adev));
-	scnprintf(fujitsu.phys, sizeof(fujitsu.phys), "%s/input0", acpi_device_hid(adev));
+	sprintf(acpi_device_name(adev), "Fujitsu %s", acpi_device_hid(adev));
+	sprintf(acpi_device_class(adev), "%s", ACPI_FUJITSU_CLASS);
 
-	error = input_fujitsu_setup(&pdev->dev, fujitsu.name, fujitsu.phys);
+	snprintf(fujitsu.phys, sizeof(fujitsu.phys),
+			"%s/input0", acpi_device_hid(adev));
+
+	error = input_fujitsu_setup(&pdev->dev,
+		acpi_device_name(adev), fujitsu.phys);
 	if (error)
 		return error;
 

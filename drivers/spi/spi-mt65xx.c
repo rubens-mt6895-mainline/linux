@@ -228,6 +228,13 @@ static const struct mtk_spi_compatible mt6991_compat = {
 	.ipm_design = true,
 };
 
+static const struct mtk_spi_compatible mt6983_compat = {
+	.need_pad_sel = true,
+	.enhance_timing = true,
+	.dma_ext = true,
+	.ipm_design = true,
+};
+
 /*
  * A piece of default chip info unless the platform
  * supplies it.
@@ -255,6 +262,9 @@ static const struct of_device_id mtk_spi_of_match[] = {
 	},
 	{ .compatible = "mediatek,mt6991-spi",
 		.data = (void *)&mt6991_compat,
+	},
+	{ .compatible = "mediatek,mt6983-spi",
+		.data = (void *)&mt6983_compat,
 	},
 	{ .compatible = "mediatek,mt7622-spi",
 		.data = (void *)&mt7622_compat,
@@ -1272,8 +1282,13 @@ static int mtk_spi_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, PTR_ERR(mdata->spi_hclk), "failed to get hclk\n");
 
 	ret = clk_set_parent(mdata->sel_clk, mdata->parent_clk);
-	if (ret < 0)
+	if (ret < 0 && ret != -EINVAL)
 		return dev_err_probe(dev, ret, "failed to clk_set_parent\n");
+	/*
+	 * xaga: LK pre-configures the SPI_SEL mux and leaves SPI2 running,
+	 * and our embedded DTS uses fixed-clock stubs for the mux input, so
+	 * clk_set_parent returns -EINVAL here. Tolerate it.
+	 */
 
 	ret = clk_prepare_enable(mdata->spi_hclk);
 	if (ret < 0)
@@ -1367,6 +1382,7 @@ static void mtk_spi_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int mtk_spi_suspend(struct device *dev)
 {
 	int ret;
@@ -1418,7 +1434,9 @@ static int mtk_spi_resume(struct device *dev)
 
 	return ret;
 }
+#endif /* CONFIG_PM_SLEEP */
 
+#ifdef CONFIG_PM
 static int mtk_spi_runtime_suspend(struct device *dev)
 {
 	struct spi_controller *host = dev_get_drvdata(dev);
@@ -1470,16 +1488,18 @@ static int mtk_spi_runtime_resume(struct device *dev)
 
 	return 0;
 }
+#endif /* CONFIG_PM */
 
 static const struct dev_pm_ops mtk_spi_pm = {
-	SYSTEM_SLEEP_PM_OPS(mtk_spi_suspend, mtk_spi_resume)
-	RUNTIME_PM_OPS(mtk_spi_runtime_suspend, mtk_spi_runtime_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(mtk_spi_suspend, mtk_spi_resume)
+	SET_RUNTIME_PM_OPS(mtk_spi_runtime_suspend,
+			   mtk_spi_runtime_resume, NULL)
 };
 
 static struct platform_driver mtk_spi_driver = {
 	.driver = {
 		.name = "mtk-spi",
-		.pm	= pm_ptr(&mtk_spi_pm),
+		.pm	= &mtk_spi_pm,
 		.of_match_table = mtk_spi_of_match,
 	},
 	.probe = mtk_spi_probe,

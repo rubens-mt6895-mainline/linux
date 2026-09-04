@@ -13,7 +13,7 @@ enum {
 };
 
 // incoming mailbox 0-3  register offsets
-static inline int INCOMING_MAILBOX_REG(unsigned int mailbox)
+extern inline int INCOMING_MAILBOX_REG(unsigned int mailbox)
 {
 	return (0x10 + 4 * mailbox);
 };
@@ -29,25 +29,25 @@ enum {
 };
 
 // select byte 0 to 3 of incoming mailbox
-static inline int INBOX_BYTE_BITS(unsigned int byte)
+extern inline int INBOX_BYTE_BITS(unsigned int byte)
 {
 	return (byte & 0x3) << 8;
 };
 
 // select incoming mailbox 0 to 3
-static inline int INBOX_SELECT_BITS(unsigned int mailbox)
+extern inline int INBOX_SELECT_BITS(unsigned int mailbox)
 {
 	return (mailbox & 0x3) << 10;
 };
 
 // select byte 0 to 3 of outgoing mailbox
-static inline int OUTBOX_BYTE_BITS(unsigned int byte)
+extern inline int OUTBOX_BYTE_BITS(unsigned int byte)
 {
 	return (byte & 0x3);
 };
 
 // select outgoing mailbox 0 to 3
-static inline int OUTBOX_SELECT_BITS(unsigned int mailbox)
+extern inline int OUTBOX_SELECT_BITS(unsigned int mailbox)
 {
 	return (mailbox & 0x3) << 2;
 };

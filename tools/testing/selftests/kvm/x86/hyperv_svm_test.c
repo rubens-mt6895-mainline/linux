@@ -18,6 +18,8 @@
 #include "svm_util.h"
 #include "hyperv.h"
 
+#define L2_GUEST_STACK_SIZE 256
+
 /* Exit to L1 from L2 with RDMSR instruction */
 static inline void rdmsr_from_l2(u32 msr)
 {
@@ -67,6 +69,7 @@ static void __attribute__((__flatten__)) guest_code(struct svm_test_data *svm,
 						    struct hyperv_test_pages *hv_pages,
 						    gpa_t pgs_gpa)
 {
+	unsigned long l2_guest_stack[L2_GUEST_STACK_SIZE];
 	struct vmcb *vmcb = svm->vmcb;
 	struct hv_vmcb_enlightenments *hve = &vmcb->control.hv_enlightenments;
 
@@ -78,7 +81,8 @@ static void __attribute__((__flatten__)) guest_code(struct svm_test_data *svm,
 
 	GUEST_ASSERT(svm->vmcb_gpa);
 	/* Prepare for L2 execution. */
-	generic_svm_setup(svm, l2_guest_code);
+	generic_svm_setup(svm, l2_guest_code,
+			  &l2_guest_stack[L2_GUEST_STACK_SIZE]);
 
 	/* L2 TLB flush setup */
 	hve->partition_assist_page = hv_pages->partition_assist_gpa;

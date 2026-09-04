@@ -578,7 +578,6 @@ static void synchronize_rcu_expedited_stall(unsigned long jiffies_start, unsigne
 			if (!(READ_ONCE(rnp->expmask) & mask))
 				continue;
 			ndetected++;
-			cpumask_set_cpu(cpu, &rcu_exp_stall_cpumask);
 			rdp = per_cpu_ptr(&rcu_data, cpu);
 			pr_cont(" %d-%c%c%c%c", cpu,
 				"O."[!!cpu_online(cpu)],
@@ -666,8 +665,6 @@ static void synchronize_rcu_expedited_wait(void)
 		if (rcu_stall_is_suppressed())
 			continue;
 
-		cpumask_clear(&rcu_exp_stall_cpumask);
-
 		nbcon_cpu_emergency_enter();
 
 		j = jiffies;
@@ -678,7 +675,7 @@ static void synchronize_rcu_expedited_wait(void)
 
 		nbcon_cpu_emergency_exit();
 
-		panic_on_rcu_stall(&rcu_exp_stall_cpumask);
+		panic_on_rcu_stall();
 	}
 }
 
@@ -711,8 +708,6 @@ static void rcu_exp_wait_wake(unsigned long s)
 		}
 		smp_mb(); /* All above changes before wakeup. */
 		wake_up_all(&rnp->exp_wq[rcu_seq_ctr(s) & 0x3]);
-		if (rcu_is_leaf_node(rnp))
-			rcu_nocb_exp_cleanup(rnp);
 	}
 	trace_rcu_exp_grace_period(rcu_state.name, s, TPS("endwake"));
 	mutex_unlock(&rcu_state.exp_wake_mutex);
@@ -736,7 +731,7 @@ static void rcu_exp_need_qs(void)
 {
 	lockdep_assert_irqs_disabled();
 	ASSERT_EXCLUSIVE_WRITER_SCOPED(*this_cpu_ptr(&rcu_data.cpu_no_qs.b.exp));
-	this_cpu_write(rcu_data.cpu_no_qs.b.exp, true);
+	__this_cpu_write(rcu_data.cpu_no_qs.b.exp, true);
 	/* Store .exp before .rcu_urgent_qs. */
 	smp_store_release(this_cpu_ptr(&rcu_data.rcu_urgent_qs), true);
 	set_need_resched_current();
@@ -875,7 +870,7 @@ static void rcu_exp_handler(void *unused)
 
 	ASSERT_EXCLUSIVE_WRITER_SCOPED(rdp->cpu_no_qs.b.exp);
 	if (!(READ_ONCE(rnp->expmask) & rdp->grpmask) ||
-	    this_cpu_read(rcu_data.cpu_no_qs.b.exp))
+	    __this_cpu_read(rcu_data.cpu_no_qs.b.exp))
 		return;
 	if (rcu_is_cpu_rrupt_from_idle() ||
 	    (IS_ENABLED(CONFIG_PREEMPT_COUNT) && preempt_bh_enabled)) {
@@ -1052,18 +1047,18 @@ EXPORT_SYMBOL_GPL(start_poll_synchronize_rcu_expedited);
 
 /**
  * start_poll_synchronize_rcu_expedited_full - Take a full snapshot and start expedited grace period
- * @gsp: Place to put snapshot of grace-period state
+ * @rgosp: Place to put snapshot of grace-period state
  *
- * Places the normal and expedited grace-period states in gsp.  This
+ * Places the normal and expedited grace-period states in rgosp.  This
  * state value can be passed to a later call to cond_synchronize_rcu_full()
  * or poll_state_synchronize_rcu_full() to determine whether or not a
  * grace period (whether normal or expedited) has elapsed in the meantime.
  * If the needed expedited grace period is not already slated to start,
  * initiates that grace period.
  */
-void start_poll_synchronize_rcu_expedited_full(struct rcu_gp_seq *gsp)
+void start_poll_synchronize_rcu_expedited_full(struct rcu_gp_oldstate *rgosp)
 {
-	get_state_synchronize_rcu_full(gsp);
+	get_state_synchronize_rcu_full(rgosp);
 	(void)start_poll_synchronize_rcu_expedited();
 }
 EXPORT_SYMBOL_GPL(start_poll_synchronize_rcu_expedited_full);
@@ -1097,11 +1092,11 @@ EXPORT_SYMBOL_GPL(cond_synchronize_rcu_expedited);
 
 /**
  * cond_synchronize_rcu_expedited_full - Conditionally wait for an expedited RCU grace period
- * @gsp: value from get_state_synchronize_rcu_full(), start_poll_synchronize_rcu_full(), or start_poll_synchronize_rcu_expedited_full()
+ * @rgosp: value from get_state_synchronize_rcu_full(), start_poll_synchronize_rcu_full(), or start_poll_synchronize_rcu_expedited_full()
  *
  * If a full RCU grace period has elapsed since the call to
  * get_state_synchronize_rcu_full(), start_poll_synchronize_rcu_full(),
- * or start_poll_synchronize_rcu_expedited_full() from which @gsp was
+ * or start_poll_synchronize_rcu_expedited_full() from which @rgosp was
  * obtained, just return.  Otherwise, invoke synchronize_rcu_expedited()
  * to wait for a full grace period.
  *
@@ -1112,12 +1107,12 @@ EXPORT_SYMBOL_GPL(cond_synchronize_rcu_expedited);
  *
  * This function provides the same memory-ordering guarantees that
  * would be provided by a synchronize_rcu() that was invoked at the call
- * to the function that provided @gsp and that returned at the end of
+ * to the function that provided @rgosp and that returned at the end of
  * this function.
  */
-void cond_synchronize_rcu_expedited_full(struct rcu_gp_seq *gsp)
+void cond_synchronize_rcu_expedited_full(struct rcu_gp_oldstate *rgosp)
 {
-	if (!poll_state_synchronize_rcu_full(gsp))
+	if (!poll_state_synchronize_rcu_full(rgosp))
 		synchronize_rcu_expedited();
 }
 EXPORT_SYMBOL_GPL(cond_synchronize_rcu_expedited_full);

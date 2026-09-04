@@ -96,10 +96,7 @@ static void rpc_unregister_client(struct rpc_clnt *clnt)
 
 static void __rpc_clnt_remove_pipedir(struct rpc_clnt *clnt)
 {
-	if (clnt->pipefs_sb) {
-		rpc_remove_client_dir(clnt);
-		clnt->pipefs_sb = NULL;
-	}
+	rpc_remove_client_dir(clnt);
 }
 
 static void rpc_clnt_remove_pipedir(struct rpc_clnt *clnt)
@@ -180,28 +177,19 @@ static int rpc_clnt_skip_event(struct rpc_clnt *clnt, unsigned long event)
 }
 
 static int __rpc_clnt_handle_event(struct rpc_clnt *clnt, unsigned long event,
-				    struct super_block *sb)
+				   struct super_block *sb)
 {
-	int err = 0;
-
 	switch (event) {
 	case RPC_PIPEFS_MOUNT:
-		clnt->pipefs_sb = sb;
-		err = rpc_setup_pipedir_sb(sb, clnt);
-		if (err)
-			clnt->pipefs_sb = NULL;
-		break;
+		return rpc_setup_pipedir_sb(sb, clnt);
 	case RPC_PIPEFS_UMOUNT:
-		if (clnt->pipefs_sb == sb) {
-			__rpc_clnt_remove_pipedir(clnt);
-			clnt->pipefs_sb = NULL;
-		}
+		__rpc_clnt_remove_pipedir(clnt);
 		break;
 	default:
 		printk(KERN_ERR "%s: unknown event: %ld\n", __func__, event);
 		return -ENOTSUPP;
 	}
-	return err;
+	return 0;
 }
 
 static int __rpc_pipefs_event(struct rpc_clnt *clnt, unsigned long event,

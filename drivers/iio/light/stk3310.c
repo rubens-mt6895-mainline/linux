@@ -673,8 +673,11 @@ static int stk3310_probe(struct i2c_client *client)
 						IRQF_TRIGGER_FALLING |
 						IRQF_ONESHOT,
 						"stk3310_event", indio_dev);
-		if (ret)
+		if (ret < 0) {
+			dev_err(&client->dev, "request irq %d failed\n",
+				client->irq);
 			goto err_standby;
+		}
 	}
 
 	ret = iio_device_register(indio_dev);

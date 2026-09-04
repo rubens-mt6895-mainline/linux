@@ -468,8 +468,10 @@ static int sti_mbox_probe(struct platform_device *pdev)
 					sti_mbox_irq_handler,
 					sti_mbox_thread_handler,
 					IRQF_ONESHOT, mdev->name, mdev);
-	if (ret)
+	if (ret) {
+		dev_err(&pdev->dev, "Can't claim IRQ %d\n", irq);
 		return -EINVAL;
+	}
 
 	dev_info(&pdev->dev, "%s: Registered Tx/Rx Mailbox\n", mdev->name);
 

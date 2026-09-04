@@ -1,7 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* speakup_dtlk.h - header file for speakups DoubleTalk driver. */
-#ifndef _SPEAKUP_DTLK_H
-#define _SPEAKUP_DTLK_H
 
 #define SYNTH_IO_EXTENT	0x02
 #define SYNTH_CLEAR	0x18		/* stops speech */
@@ -41,7 +39,7 @@
 
 				/* data returned by Interrogate command */
 struct synth_settings {
-	u16 serial_number;	/* 0-7Fh:0-7Fh */
+	u_short serial_number;	/* 0-7Fh:0-7Fh */
 	u_char rom_version[24]; /* null terminated string */
 	u_char mode;		/* 0=Character; 1=Phoneme; 2=Text */
 	u_char punc_level;	/* nB; 0-7 */
@@ -63,4 +61,3 @@ struct synth_settings {
 				 */
 	u_char has_indexing;	/* nonzero if indexing is implemented */
 };
-#endif

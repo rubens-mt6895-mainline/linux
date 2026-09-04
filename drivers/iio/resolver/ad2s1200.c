@@ -143,14 +143,18 @@ static int ad2s1200_probe(struct spi_device *spi)
 	st->sdev = spi;
 
 	st->sample = devm_gpiod_get(&spi->dev, "adi,sample", GPIOD_OUT_LOW);
-	if (IS_ERR(st->sample))
-		return dev_err_probe(&spi->dev, PTR_ERR(st->sample),
-				     "Failed to claim SAMPLE gpio\n");
+	if (IS_ERR(st->sample)) {
+		dev_err(&spi->dev, "Failed to claim SAMPLE gpio: err=%ld\n",
+			PTR_ERR(st->sample));
+		return PTR_ERR(st->sample);
+	}
 
 	st->rdvel = devm_gpiod_get(&spi->dev, "adi,rdvel", GPIOD_OUT_LOW);
-	if (IS_ERR(st->rdvel))
-		return dev_err_probe(&spi->dev, PTR_ERR(st->rdvel),
-				     "Failed to claim RDVEL gpio\n");
+	if (IS_ERR(st->rdvel)) {
+		dev_err(&spi->dev, "Failed to claim RDVEL gpio: err=%ld\n",
+			PTR_ERR(st->rdvel));
+		return PTR_ERR(st->rdvel);
+	}
 
 	indio_dev->info = &ad2s1200_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
@@ -178,8 +182,8 @@ static const struct of_device_id ad2s1200_of_match[] = {
 MODULE_DEVICE_TABLE(of, ad2s1200_of_match);
 
 static const struct spi_device_id ad2s1200_id[] = {
-	{ .name = "ad2s1200" },
-	{ .name = "ad2s1205" },
+	{ "ad2s1200" },
+	{ "ad2s1205" },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, ad2s1200_id);

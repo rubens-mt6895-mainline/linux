@@ -20,7 +20,6 @@
 const char *const audit_mode_names[] = {
 	"normal",
 	"quiet_denied",
-	"quiet.allowed",
 	"quiet",
 	"noquiet",
 	"all"
@@ -53,7 +52,7 @@ static const char *const aa_class_names[] = {
 	"unknown",
 	"unknown",
 	"net",
-	"netv9",
+	"unknown",
 	"label",
 	"posix_mqueue",
 	"io_uring",
@@ -68,7 +67,7 @@ static const char *const aa_class_names[] = {
 	"unknown",
 	"unknown",
 	"unknown",
-	"netv9_packet",
+	"unknown",
 	"X",
 	"dbus",
 };
@@ -140,17 +139,6 @@ static void audit_pre(struct audit_buffer *ab, void *va)
 	}
 }
 
-int aa_select_audit_type(u32 denied, const struct aa_perms *perms)
-{
-	if (likely(!denied))
-		return AUDIT_APPARMOR_AUDIT;
-	else if (denied & perms->kill)
-		return AUDIT_APPARMOR_KILL;
-	else if (denied == (denied & perms->complain))
-		return AUDIT_APPARMOR_ALLOWED;
-	return AUDIT_APPARMOR_DENIED;
-}
-
 /**
  * aa_audit_msg - Log a message to the audit subsystem
  * @type: audit type for the message
@@ -162,28 +150,6 @@ void aa_audit_msg(int type, struct apparmor_audit_data *ad,
 {
 	ad->type = type;
 	common_lsm_audit(&ad->common, audit_pre, cb);
-}
-
-int aa_audit_perm_error(struct aa_label *label, u32 request, int error,
-			struct apparmor_audit_data *ad,
-			void (*cb)(struct audit_buffer *, void *))
-{
-	int type = aa_select_audit_type(request, &nullperms);
-
-	if (ad) {
-		struct aa_profile *profile;
-		struct label_it i;
-
-		ad->request = request;
-		ad->denied = request;
-		ad->error = error;
-		label_for_each_confined(i, label, profile) {
-			ad->subj_label = &profile->label;
-			aa_audit_msg(type, ad, cb);
-		}
-	}
-
-	return error;
 }
 
 /**
@@ -226,7 +192,7 @@ int aa_audit(int type, struct aa_profile *profile,
 	aa_audit_msg(type, ad, cb);
 
 	if (ad->type == AUDIT_APPARMOR_KILL)
-		send_sig_info(profile->signal, SEND_SIG_NOINFO,
+		(void)send_sig_info(profile->signal, NULL,
 			ad->common.type == LSM_AUDIT_DATA_TASK &&
 			ad->common.u.tsk ? ad->common.u.tsk : current);
 

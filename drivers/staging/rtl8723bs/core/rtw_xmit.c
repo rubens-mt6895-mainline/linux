@@ -185,8 +185,7 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 		pxmitbuf->phead = pxmitbuf->pbuf;
 		pxmitbuf->pend = pxmitbuf->pbuf + MAX_XMITBUF_SZ;
 		pxmitbuf->len = 0;
-		pxmitbuf->pdata = pxmitbuf->phead;
-		pxmitbuf->ptail = pxmitbuf->phead;
+		pxmitbuf->pdata = pxmitbuf->ptail = pxmitbuf->phead;
 
 		pxmitbuf->flags = XMIT_VO_QUEUE;
 
@@ -420,7 +419,7 @@ static void update_attrib_vcs_info(struct adapter *padapter, struct xmit_frame *
 			/* IOT action */
 			if ((pmlmeinfo->assoc_AP_vendor == HT_IOT_PEER_ATHEROS) &&
 			    pattrib->ampdu_en &&
-			    (padapter->securitypriv.dot11_privacy_algrthm == _AES_)) {
+			    (padapter->securitypriv.dot11PrivacyAlgrthm == _AES_)) {
 				pattrib->vcs_mode = CTS_TO_SELF;
 				break;
 			}
@@ -506,8 +505,9 @@ static void update_attrib_phy_info(struct adapter *padapter, struct pkt_attrib *
 	pattrib->retry_ctrl = false;
 }
 
-static int update_attrib_sec_info(struct adapter *padapter, struct pkt_attrib *pattrib, struct sta_info *psta)
+static s32 update_attrib_sec_info(struct adapter *padapter, struct pkt_attrib *pattrib, struct sta_info *psta)
 {
+	signed int res = _SUCCESS;
 	struct mlme_priv *pmlmepriv = &padapter->mlmepriv;
 	struct security_priv *psecuritypriv = &padapter->securitypriv;
 	signed int bmcast = is_multicast_ether_addr(pattrib->ra);
@@ -519,18 +519,20 @@ static int update_attrib_sec_info(struct adapter *padapter, struct pkt_attrib *p
 	if (psta->ieee8021x_blocked) {
 		pattrib->encrypt = 0;
 
-		if ((pattrib->ether_type != 0x888e) && !check_fwstate(pmlmepriv, WIFI_MP_STATE))
-			return -EINVAL;
+		if ((pattrib->ether_type != 0x888e) && !check_fwstate(pmlmepriv, WIFI_MP_STATE)) {
+			res = _FAIL;
+			goto exit;
+		}
 	} else {
 		GET_ENCRY_ALGO(psecuritypriv, psta, pattrib->encrypt, bmcast);
 
-		switch (psecuritypriv->dot11_auth_algrthm) {
-		case dot11_auth_algrthm_open:
-		case dot11_auth_algrthm_shared:
-		case dot11_auth_algrthm_auto:
+		switch (psecuritypriv->dot11AuthAlgrthm) {
+		case dot11AuthAlgrthm_Open:
+		case dot11AuthAlgrthm_Shared:
+		case dot11AuthAlgrthm_Auto:
 			pattrib->key_idx = (u8)psecuritypriv->dot11PrivacyKeyIndex;
 			break;
-		case dot11_auth_algrthm_8021x:
+		case dot11AuthAlgrthm_8021X:
 			if (bmcast)
 				pattrib->key_idx = (u8)psecuritypriv->dot118021XGrpKeyid;
 			else
@@ -558,8 +560,10 @@ static int update_attrib_sec_info(struct adapter *padapter, struct pkt_attrib *p
 		pattrib->iv_len = 8;
 		pattrib->icv_len = 4;
 
-		if (psecuritypriv->busetkipkey == _FAIL)
-			return -EINVAL;
+		if (psecuritypriv->busetkipkey == _FAIL) {
+			res = _FAIL;
+			goto exit;
+		}
 
 		if (bmcast)
 			TKIP_IV(pattrib->iv, psta->dot11txpn, pattrib->key_idx);
@@ -597,7 +601,9 @@ static int update_attrib_sec_info(struct adapter *padapter, struct pkt_attrib *p
 	else
 		pattrib->bswenc = false;
 
-	return 0;
+exit:
+
+	return res;
 }
 
 u8 qos_acm(u8 acm_mask, u8 priority)
@@ -655,7 +661,7 @@ static int set_qos(struct pkt_file *ppktfile, struct pkt_attrib *pattrib)
 	return 0;
 }
 
-static int update_attrib(struct adapter *padapter, struct sk_buff *pkt, struct pkt_attrib *pattrib)
+static s32 update_attrib(struct adapter *padapter, struct sk_buff *pkt, struct pkt_attrib *pattrib)
 {
 	struct pkt_file pktfile;
 	struct sta_info *psta = NULL;
@@ -665,6 +671,7 @@ static int update_attrib(struct adapter *padapter, struct sk_buff *pkt, struct p
 	struct sta_priv *pstapriv = &padapter->stapriv;
 	struct mlme_priv *pmlmepriv = &padapter->mlmepriv;
 	struct qos_priv *pqospriv = &pmlmepriv->qospriv;
+	signed int res = _SUCCESS;
 	int ret;
 
 	_rtw_open_pktfile(pkt, &pktfile);
@@ -741,25 +748,29 @@ static int update_attrib(struct adapter *padapter, struct sk_buff *pkt, struct p
 		psta = rtw_get_bcmc_stainfo(padapter);
 	} else {
 		psta = rtw_get_stainfo(pstapriv, pattrib->ra);
-		if (!psta)	/*  if we cannot get psta => drop the pkt */
-			return -EINVAL;
-		else if (check_fwstate(pmlmepriv, WIFI_AP_STATE) && !(psta->state & _FW_LINKED))
-			return -EINVAL;
+		if (!psta)	{ /*  if we cannot get psta => drop the pkt */
+			res = _FAIL;
+			goto exit;
+		} else if (check_fwstate(pmlmepriv, WIFI_AP_STATE) && !(psta->state & _FW_LINKED)) {
+			res = _FAIL;
+			goto exit;
+		}
 	}
 
 	if (!psta) {
 		/*  if we cannot get psta => drop the pkt */
-		return -EINVAL;
+		res = _FAIL;
+		goto exit;
 	}
 
 	if (!(psta->state & _FW_LINKED))
-		return -EINVAL;
+		return _FAIL;
 
 	spin_lock_bh(&psta->lock);
-	ret = update_attrib_sec_info(padapter, pattrib, psta);
-	if (ret) {
+	if (update_attrib_sec_info(padapter, pattrib, psta) == _FAIL) {
 		spin_unlock_bh(&psta->lock);
-		return ret;
+		res = _FAIL;
+		goto exit;
 	}
 
 	update_attrib_phy_info(padapter, pattrib, psta);
@@ -795,10 +806,12 @@ static int update_attrib(struct adapter *padapter, struct sk_buff *pkt, struct p
 	}
 
 	/* pattrib->priority = 5; force to used VI queue, for testing */
-	return 0;
+
+exit:
+	return res;
 }
 
-static int xmitframe_addmic(struct adapter *padapter, struct xmit_frame *pxmitframe)
+static s32 xmitframe_addmic(struct adapter *padapter, struct xmit_frame *pxmitframe)
 {
 	signed int			curfragnum, length;
 	u8 *pframe, *payload, mic[8];
@@ -821,12 +834,12 @@ static int xmitframe_addmic(struct adapter *padapter, struct xmit_frame *pxmitfr
 
 			if (bmcst) {
 				if (!memcmp(psecuritypriv->dot118021XGrptxmickey[psecuritypriv->dot118021XGrpKeyid].skey, null_key, 16))
-					return -EINVAL;
+					return _FAIL;
 				/* start to calculate the mic code */
 				rtw_secmicsetkey(&micdata, psecuritypriv->dot118021XGrptxmickey[psecuritypriv->dot118021XGrpKeyid].skey);
 			} else {
 				if (!memcmp(&pattrib->dot11tkiptxmickey.skey[0], null_key, 16))
-					return -EINVAL;
+					return _FAIL;
 				/* start to calculate the mic code */
 				rtw_secmicsetkey(&micdata, &pattrib->dot11tkiptxmickey.skey[0]);
 			}
@@ -877,7 +890,7 @@ static int xmitframe_addmic(struct adapter *padapter, struct xmit_frame *pxmitfr
 			pattrib->last_txcmdsz += 8;
 			}
 	}
-	return 0;
+	return _SUCCESS;
 }
 
 static s32 xmitframe_swencrypt(struct adapter *padapter, struct xmit_frame *pxmitframe)
@@ -904,7 +917,7 @@ static s32 xmitframe_swencrypt(struct adapter *padapter, struct xmit_frame *pxmi
 	return _SUCCESS;
 }
 
-int rtw_make_wlanhdr(struct adapter *padapter, u8 *hdr, struct pkt_attrib *pattrib)
+s32 rtw_make_wlanhdr(struct adapter *padapter, u8 *hdr, struct pkt_attrib *pattrib)
 {
 	u16 *qc;
 
@@ -912,6 +925,7 @@ int rtw_make_wlanhdr(struct adapter *padapter, u8 *hdr, struct pkt_attrib *pattr
 	struct mlme_priv *pmlmepriv = &padapter->mlmepriv;
 	struct qos_priv *pqospriv = &pmlmepriv->qospriv;
 	u8 qos_option = false;
+	signed int res = _SUCCESS;
 	__le16 *fctrl = &pwlanhdr->frame_control;
 
 	memset(hdr, 0, WLANHDR_OFFSET);
@@ -951,7 +965,8 @@ int rtw_make_wlanhdr(struct adapter *padapter, u8 *hdr, struct pkt_attrib *pattr
 			if (pattrib->qos_en)
 				qos_option = true;
 		} else {
-			return -EINVAL;
+			res = _FAIL;
+			goto exit;
 		}
 
 		if (pattrib->mdata)
@@ -979,13 +994,13 @@ int rtw_make_wlanhdr(struct adapter *padapter, u8 *hdr, struct pkt_attrib *pattr
 
 			psta = rtw_get_stainfo(&padapter->stapriv, pattrib->ra);
 			if (pattrib->psta != psta)
-				return -EINVAL;
+				return _FAIL;
 
 			if (!psta)
-				return -ENOENT;
+				return _FAIL;
 
 			if (!(psta->state & _FW_LINKED))
-				return -ENOLINK;
+				return _FAIL;
 
 			if (psta) {
 				psta->sta_xmitpriv.txseq_tid[pattrib->priority]++;
@@ -1025,7 +1040,8 @@ int rtw_make_wlanhdr(struct adapter *padapter, u8 *hdr, struct pkt_attrib *pattr
 	} else {
 	}
 
-	return 0;
+exit:
+	return res;
 }
 
 s32 rtw_txframes_pending(struct adapter *padapter)
@@ -1065,7 +1081,7 @@ u32 rtw_calculate_wlan_pkt_size_by_attribue(struct pkt_attrib *pattrib)
  * 5. move frag chunk from pframe to pxmitframe->mem
  * 6. apply sw-encrypt, if necessary.
  */
-int rtw_xmitframe_coalesce(struct adapter *padapter, struct sk_buff *pkt, struct xmit_frame *pxmitframe)
+s32 rtw_xmitframe_coalesce(struct adapter *padapter, struct sk_buff *pkt, struct xmit_frame *pxmitframe)
 {
 	struct pkt_file pktfile;
 
@@ -1083,19 +1099,21 @@ int rtw_xmitframe_coalesce(struct adapter *padapter, struct sk_buff *pkt, struct
 	u8 *pbuf_start;
 
 	s32 bmcst = is_multicast_ether_addr(pattrib->ra);
+	s32 res = _SUCCESS;
 	int ret;
 
 	if (!pxmitframe->buf_addr)
-		return -EINVAL;
+		return _FAIL;
 
 	pbuf_start = pxmitframe->buf_addr;
 
 	hw_hdr_offset = TXDESC_OFFSET;
 	mem_start = pbuf_start +	hw_hdr_offset;
 
-	ret = rtw_make_wlanhdr(padapter, mem_start, pattrib);
-	if (ret)
-		return ret;
+	if (rtw_make_wlanhdr(padapter, mem_start, pattrib) == _FAIL) {
+		res = _FAIL;
+		goto exit;
+	}
 
 	_rtw_open_pktfile(pkt, &pktfile);
 	ret = _rtw_pktfile_read(&pktfile, NULL, pattrib->pkt_hdrlen);
@@ -1173,9 +1191,10 @@ int rtw_xmitframe_coalesce(struct adapter *padapter, struct sk_buff *pkt, struct
 		memcpy(mem_start, pbuf_start + hw_hdr_offset, pattrib->hdrlen);
 	}
 
-	ret = xmitframe_addmic(padapter, pxmitframe);
-	if (ret)
-		return ret;
+	if (xmitframe_addmic(padapter, pxmitframe) == _FAIL) {
+		res = _FAIL;
+		goto exit;
+	}
 
 	xmitframe_swencrypt(padapter, pxmitframe);
 
@@ -1184,7 +1203,8 @@ int rtw_xmitframe_coalesce(struct adapter *padapter, struct sk_buff *pkt, struct
 	else
 		pattrib->vcs_mode = NONE_VCS;
 
-	return 0;
+exit:
+	return res;
 }
 
 /* broadcast or multicast management pkt use BIP, unicast management pkt use CCMP encryption */
@@ -1741,7 +1761,7 @@ s32 rtw_free_xmitframe(struct xmit_priv *pxmitpriv, struct xmit_frame *pxmitfram
 	struct sk_buff *pndis_pkt = NULL;
 
 	if (!pxmitframe)
-		return _SUCCESS;
+		goto exit;
 
 	if (pxmitframe->pkt) {
 		pndis_pkt = pxmitframe->pkt;
@@ -1774,6 +1794,7 @@ check_pkt_complete:
 	if (pndis_pkt)
 		rtw_os_pkt_complete(padapter, pndis_pkt);
 
+exit:
 	return _SUCCESS;
 }
 
@@ -1948,7 +1969,7 @@ s32 rtw_xmit(struct adapter *padapter, struct sk_buff **ppkt)
 	struct xmit_priv *pxmitpriv = &padapter->xmitpriv;
 	struct xmit_frame *pxmitframe = NULL;
 
-	int ret;
+	s32 res;
 
 	if (start == 0)
 		start = jiffies;
@@ -1961,8 +1982,9 @@ s32 rtw_xmit(struct adapter *padapter, struct sk_buff **ppkt)
 	if (!pxmitframe)
 		return -1;
 
-	ret = update_attrib(padapter, *ppkt, &pxmitframe->attrib);
-	if (ret) {
+	res = update_attrib(padapter, *ppkt, &pxmitframe->attrib);
+
+	if (res != _SUCCESS) {
 		rtw_free_xmitframe(pxmitpriv, pxmitframe);
 		return -1;
 	}
@@ -2061,7 +2083,7 @@ signed int xmitframe_enqueue_for_sleeping_sta(struct adapter *padapter, struct x
 			pstapriv->sta_dz_bitmap |= BIT(0);
 
 			if (update_tim)
-				update_beacon(padapter, WLAN_EID_TIM, true);
+				update_beacon(padapter, WLAN_EID_TIM, NULL, true);
 			else
 				chk_bmc_sleepq_cmd(padapter);
 
@@ -2116,7 +2138,7 @@ signed int xmitframe_enqueue_for_sleeping_sta(struct adapter *padapter, struct x
 
 				if (update_tim)
 					/* update BCN for TIM IE */
-					update_beacon(padapter, WLAN_EID_TIM, true);
+					update_beacon(padapter, WLAN_EID_TIM, NULL, true);
 			}
 
 			ret = true;
@@ -2128,9 +2150,7 @@ signed int xmitframe_enqueue_for_sleeping_sta(struct adapter *padapter, struct x
 	return ret;
 }
 
-static void dequeue_xmitframes_to_sleeping_queue(struct adapter *padapter,
-						 struct sta_info *psta,
-						 struct __queue *pframequeue)
+static void dequeue_xmitframes_to_sleeping_queue(struct adapter *padapter, struct sta_info *psta, struct __queue *pframequeue)
 {
 	signed int ret;
 	struct list_head *plist, *phead, *tmp;
@@ -2313,7 +2333,7 @@ _exit:
 	spin_unlock_bh(&pxmitpriv->lock);
 
 	if (update_mask)
-		update_beacon(padapter, WLAN_EID_TIM, true);
+		update_beacon(padapter, WLAN_EID_TIM, NULL, true);
 }
 
 void xmit_delivery_enabled_frames(struct adapter *padapter, struct sta_info *psta)
@@ -2373,7 +2393,7 @@ void xmit_delivery_enabled_frames(struct adapter *padapter, struct sta_info *pst
 		if ((psta->sleepq_ac_len == 0) && (!psta->has_legacy_ac) && (wmmps_ac)) {
 			pstapriv->tim_bitmap &= ~BIT(psta->aid);
 
-			update_beacon(padapter, WLAN_EID_TIM, true);
+			update_beacon(padapter, WLAN_EID_TIM, NULL, true);
 		}
 	}
 

@@ -1134,7 +1134,6 @@ struct nft_pipapo_elem *pipapo_get_avx2(const struct nft_pipapo_match *m,
 	struct nft_pipapo_scratch *scratch;
 	const struct nft_pipapo_field *f;
 	unsigned long *res, *fill, *map;
-	struct nft_pipapo_elem *e;
 	bool map_index;
 	int ret = 0;
 	int i;
@@ -1208,11 +1207,14 @@ struct nft_pipapo_elem *pipapo_get_avx2(const struct nft_pipapo_match *m,
 next_match:
 		if (ret < 0) {
 			scratch->map_index = map_index;
-			e = NULL;
-			goto out;
+			kernel_fpu_end();
+			__local_unlock_nested_bh(&scratch->bh_lock);
+			return NULL;
 		}
 
 		if (last) {
+			struct nft_pipapo_elem *e;
+
 			e = f->mt[ret].e;
 			if (unlikely(__nft_set_elem_expired(&e->ext, tstamp) ||
 				     !nft_set_elem_active(&e->ext, genmask))) {
@@ -1222,7 +1224,9 @@ next_match:
 			}
 
 			scratch->map_index = map_index;
-			goto out;
+			kernel_fpu_end();
+			__local_unlock_nested_bh(&scratch->bh_lock);
+			return e;
 		}
 
 		map_index = !map_index;
@@ -1230,12 +1234,9 @@ next_match:
 		data += NFT_PIPAPO_GROUPS_PADDED_SIZE(f);
 	}
 
-	e = NULL;
-out:
-	asm volatile("vzeroupper");
 	kernel_fpu_end();
 	__local_unlock_nested_bh(&scratch->bh_lock);
-	return e;
+	return NULL;
 }
 
 /**

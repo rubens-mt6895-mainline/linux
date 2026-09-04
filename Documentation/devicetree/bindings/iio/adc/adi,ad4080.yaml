@@ -39,7 +39,6 @@ properties:
       - adi,ad4087
       - adi,ad4088
       - adi,ad4880
-      - adi,ad4883
       - adi,ad4884
 
   reg:
@@ -103,7 +102,6 @@ allOf:
           contains:
             enum:
               - adi,ad4880
-              - adi,ad4883
               - adi,ad4884
     then:
       properties:

@@ -331,7 +331,7 @@ static int imx91_tmu_probe(struct platform_device *pdev)
 					IRQF_ONESHOT, "imx91_thermal", tmu);
 
 	if (ret < 0)
-		return ret;
+		return dev_err_probe(dev, ret, "failed to request alarm irq\n");
 
 	pm_runtime_put(dev);
 

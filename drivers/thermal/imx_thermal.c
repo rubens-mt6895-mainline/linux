@@ -732,8 +732,10 @@ static int imx_thermal_probe(struct platform_device *pdev)
 	ret = devm_request_threaded_irq(dev, data->irq,
 			imx_thermal_alarm_irq, imx_thermal_alarm_irq_thread,
 			0, "imx_thermal", data);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(dev, "failed to request alarm irq: %d\n", ret);
 		goto thermal_zone_unregister;
+	}
 
 	pm_runtime_put(data->dev);
 
@@ -830,12 +832,12 @@ static int imx_thermal_runtime_resume(struct device *dev)
 	ret = regmap_write(map, socdata->sensor_ctrl + REG_CLR,
 			   socdata->power_down_mask);
 	if (ret)
-		goto disable_clk;
+		return ret;
 
 	ret = regmap_write(map, socdata->sensor_ctrl + REG_SET,
 			   socdata->measure_temp_mask);
 	if (ret)
-		goto disable_clk;
+		return ret;
 
 	/*
 	 * According to the temp sensor designers, it may require up to ~17us
@@ -844,11 +846,6 @@ static int imx_thermal_runtime_resume(struct device *dev)
 	usleep_range(20, 50);
 
 	return 0;
-
-disable_clk:
-	clk_disable_unprepare(data->thermal_clk);
-
-	return ret;
 }
 
 static const struct dev_pm_ops imx_thermal_pm_ops = {

@@ -28,6 +28,8 @@
 
 #define TEST_VMCB_L2_GPA		TEST_VMCB_L1_GPA(0)
 
+#define L2_GUEST_STACK_SIZE		64
+
 static void l2_guest_code_vmsave(void)
 {
 	asm volatile("vmsave %0" : : "a"(TEST_VMCB_L2_GPA) : "memory");
@@ -68,8 +70,10 @@ static void l2_guest_code_vmcb1(void)
 
 static void l1_guest_code(struct svm_test_data *svm)
 {
+	unsigned long l2_guest_stack[L2_GUEST_STACK_SIZE];
+
 	/* Each test case initializes the guest RIP below */
-	generic_svm_setup(svm, NULL);
+	generic_svm_setup(svm, NULL, &l2_guest_stack[L2_GUEST_STACK_SIZE]);
 
 	/* Set VMSAVE/VMLOAD intercepts and make sure they work with.. */
 	svm->vmcb->control.intercept |= (BIT_ULL(INTERCEPT_VMSAVE) |

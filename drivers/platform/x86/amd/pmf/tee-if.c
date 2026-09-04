@@ -8,9 +8,7 @@
  * Author: Shyam Sundar S K <Shyam-sundar.S-k@amd.com>
  */
 
-#include <linux/array_size.h>
 #include <linux/debugfs.h>
-#include <linux/dev_printk.h>
 #include <linux/tee_drv.h>
 #include <linux/uuid.h>
 #include "pmf.h"
@@ -99,18 +97,11 @@ static int amd_pmf_get_bios_output_idx(u32 action_idx)
 
 static void amd_pmf_update_bios_output(struct amd_pmf_dev *pdev, struct ta_pmf_action *action)
 {
-	int bios_idx;
-	int ret;
+	u32 bios_idx;
 
 	bios_idx = amd_pmf_get_bios_output_idx(action->action_index);
-	if (bios_idx < 0 || bios_idx >= ARRAY_SIZE(pdev->bios_output)) {
-		dev_warn(pdev->dev, "BIOS output index %d out of bounds\n", bios_idx);
-		return;
-	}
 
-	ret = amd_pmf_smartpc_apply_bios_output(pdev, action->value, BIT(bios_idx), bios_idx);
-	if (!ret)
-		pdev->bios_output[bios_idx] = action->value;
+	amd_pmf_smartpc_apply_bios_output(pdev, action->value, BIT(bios_idx), bios_idx);
 }
 
 static void amd_pmf_apply_policies(struct amd_pmf_dev *dev, struct ta_pmf_enact_result *out)

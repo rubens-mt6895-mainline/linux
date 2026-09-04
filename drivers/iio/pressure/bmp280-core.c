@@ -750,10 +750,7 @@ static int bmp280_read_raw(struct iio_dev *indio_dev,
 	struct bmp280_data *data = iio_priv(indio_dev);
 	int ret;
 
-	ret = pm_runtime_resume_and_get(data->dev);
-	if (ret < 0)
-		return ret;
-
+	pm_runtime_get_sync(data->dev);
 	ret = bmp280_read_raw_impl(indio_dev, chan, val, val2, mask);
 	pm_runtime_put_autosuspend(data->dev);
 
@@ -927,10 +924,7 @@ static int bmp280_write_raw(struct iio_dev *indio_dev,
 	struct bmp280_data *data = iio_priv(indio_dev);
 	int ret;
 
-	ret = pm_runtime_resume_and_get(data->dev);
-	if (ret < 0)
-		return ret;
-
+	pm_runtime_get_sync(data->dev);
 	ret = bmp280_write_raw_impl(indio_dev, chan, val, val2, mask);
 	pm_runtime_put_autosuspend(data->dev);
 
@@ -1339,7 +1333,7 @@ static int __bmp280_trigger_probe(struct iio_dev *indio_dev,
 					irq_thread_handler, IRQF_ONESHOT,
 					indio_dev->name, indio_dev);
 	if (ret)
-		return ret;
+		return dev_err_probe(dev, ret, "request IRQ failed.\n");
 
 	ret = devm_iio_trigger_register(data->dev, data->trig);
 	if (ret)
@@ -2260,10 +2254,7 @@ static int bmp580_nvmem_read(void *priv, unsigned int offset, void *val,
 	struct bmp280_data *data = priv;
 	int ret;
 
-	ret = pm_runtime_resume_and_get(data->dev);
-	if (ret < 0)
-		return ret;
-
+	pm_runtime_get_sync(data->dev);
 	ret = bmp580_nvmem_read_impl(priv, offset, val, bytes);
 	pm_runtime_put_autosuspend(data->dev);
 
@@ -2337,10 +2328,7 @@ static int bmp580_nvmem_write(void *priv, unsigned int offset, void *val,
 	struct bmp280_data *data = priv;
 	int ret;
 
-	ret = pm_runtime_resume_and_get(data->dev);
-	if (ret < 0)
-		return ret;
-
+	pm_runtime_get_sync(data->dev);
 	ret = bmp580_nvmem_write_impl(priv, offset, val, bytes);
 	pm_runtime_put_autosuspend(data->dev);
 
@@ -3120,17 +3108,11 @@ EXPORT_SYMBOL_NS(bmp085_chip_info, "IIO_BMP280");
 static int bmp280_buffer_preenable(struct iio_dev *indio_dev)
 {
 	struct bmp280_data *data = iio_priv(indio_dev);
-	int ret;
 
-	ret = pm_runtime_resume_and_get(data->dev);
-	if (ret < 0)
-		return ret;
+	pm_runtime_get_sync(data->dev);
+	data->chip_info->set_mode(data, BMP280_NORMAL);
 
-	ret = data->chip_info->set_mode(data, BMP280_NORMAL);
-	if (ret)
-		pm_runtime_put_autosuspend(data->dev);
-
-	return ret;
+	return 0;
 }
 
 static int bmp280_buffer_postdisable(struct iio_dev *indio_dev)

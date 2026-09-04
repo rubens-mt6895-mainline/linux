@@ -16,7 +16,6 @@
 #include <linux/acpi.h>
 #include <linux/array_size.h>
 #include <linux/bitfield.h>
-#include <linux/cleanup.h>
 #include <linux/device.h>
 #include <linux/dmi.h>
 #include <linux/err.h>
@@ -94,8 +93,6 @@ struct asus_armoury_priv {
 
 	u32 mini_led_dev_id;
 	u32 gpu_mux_dev_id;
-
-	bool requires_fan_curve;
 };
 
 static struct asus_armoury_priv asus_armoury = {
@@ -218,22 +215,6 @@ static int armoury_set_devstate(struct kobj_attribute *attr,
 {
 	u32 result;
 	int err;
-
-	/* On some models, PPT changes require an active fan curve */
-	if (asus_armoury.requires_fan_curve) {
-		switch (dev_id) {
-		case ASUS_WMI_DEVID_PPT_PL1_SPL:
-		case ASUS_WMI_DEVID_PPT_PL2_SPPT:
-		case ASUS_WMI_DEVID_PPT_PL3_FPPT:
-		case ASUS_WMI_DEVID_PPT_APU_SPPT:
-		case ASUS_WMI_DEVID_PPT_PLAT_SPPT:
-			if (!asus_wmi_custom_fan_curve_is_enabled()) {
-				pr_warn_once("PPT change requires an active fan curve on this model. Enable a custom fan curve first.\n");
-				return -EBUSY;
-			}
-			break;
-		}
-	}
 
 	/*
 	 * Prevent developers from bricking devices or issuing dangerous
@@ -1008,11 +989,10 @@ fail_class_get:
 /* Init / exit ****************************************************************/
 
 /* Set up the min/max and defaults for ROG tunables */
-static int init_rog_tunables(void)
+static void init_rog_tunables(void)
 {
 	const struct power_limits *ac_limits, *dc_limits;
-	struct rog_tunables *ac_rog_tunables __free(kfree) = NULL;
-	struct rog_tunables *dc_rog_tunables __free(kfree) = NULL;
+	struct rog_tunables *ac_rog_tunables = NULL, *dc_rog_tunables = NULL;
 	const struct power_data *power_data;
 	const struct dmi_system_id *dmi_id;
 
@@ -1020,25 +1000,24 @@ static int init_rog_tunables(void)
 	dmi_id = dmi_first_match(power_limits);
 	if (!dmi_id) {
 		pr_warn("No matching power limits found for this system\n");
-		return 0;
+		return;
 	}
 
 	/* Get the power data for this system */
 	power_data = dmi_id->driver_data;
 	if (!power_data) {
 		pr_info("No power data available for this system\n");
-		return 0;
+		return;
 	}
-
-	asus_armoury.requires_fan_curve = power_data->requires_fan_curve;
 
 	/* Initialize AC power tunables */
 	ac_limits = power_data->ac_data;
 	if (ac_limits) {
-		ac_rog_tunables = kzalloc_obj(*ac_rog_tunables);
+		ac_rog_tunables = kzalloc_obj(*asus_armoury.rog_tunables[ASUS_ROG_TUNABLE_AC]);
 		if (!ac_rog_tunables)
-			return -ENOMEM;
+			goto err_nomem;
 
+		asus_armoury.rog_tunables[ASUS_ROG_TUNABLE_AC] = ac_rog_tunables;
 		ac_rog_tunables->power_limits = ac_limits;
 
 		/* Set initial AC values */
@@ -1081,10 +1060,13 @@ static int init_rog_tunables(void)
 	/* Initialize DC power tunables */
 	dc_limits = power_data->dc_data;
 	if (dc_limits) {
-		dc_rog_tunables = kzalloc_obj(*dc_rog_tunables);
-		if (!dc_rog_tunables)
-			return -ENOMEM;
+		dc_rog_tunables = kzalloc_obj(*asus_armoury.rog_tunables[ASUS_ROG_TUNABLE_DC]);
+		if (!dc_rog_tunables) {
+			kfree(ac_rog_tunables);
+			goto err_nomem;
+		}
 
+		asus_armoury.rog_tunables[ASUS_ROG_TUNABLE_DC] = dc_rog_tunables;
 		dc_rog_tunables->power_limits = dc_limits;
 
 		/* Set initial DC values */
@@ -1124,16 +1106,15 @@ static int init_rog_tunables(void)
 		pr_debug("No DC PPT limits defined\n");
 	}
 
-	asus_armoury.rog_tunables[ASUS_ROG_TUNABLE_AC] = no_free_ptr(ac_rog_tunables);
-	asus_armoury.rog_tunables[ASUS_ROG_TUNABLE_DC] = no_free_ptr(dc_rog_tunables);
+	return;
 
-	return 0;
+err_nomem:
+	pr_err("Failed to allocate memory for tunables\n");
 }
 
 static int __init asus_fw_init(void)
 {
 	char *wmi_uid;
-	int err;
 
 	wmi_uid = wmi_get_acpi_device_uid(ASUS_WMI_MGMT_GUID);
 	if (!wmi_uid)
@@ -1146,21 +1127,10 @@ static int __init asus_fw_init(void)
 	if (!strcmp(wmi_uid, ASUS_ACPI_UID_ASUSWMI))
 		return -ENODEV;
 
-	err = init_rog_tunables();
-	if (err)
-		return err;
+	init_rog_tunables();
 
 	/* Must always be last step to ensure data is available */
-	err = asus_fw_attr_add();
-	if (err)
-		goto err_free_tunables;
-
-	return 0;
-
-err_free_tunables:
-	kfree(asus_armoury.rog_tunables[ASUS_ROG_TUNABLE_AC]);
-	kfree(asus_armoury.rog_tunables[ASUS_ROG_TUNABLE_DC]);
-	return err;
+	return asus_fw_attr_add();
 }
 
 static void __exit asus_fw_exit(void)

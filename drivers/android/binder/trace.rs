@@ -4,8 +4,6 @@
 
 use crate::transaction::Transaction;
 
-use core::ptr;
-
 use kernel::bindings::{rust_binder_transaction, task_struct};
 use kernel::error::Result;
 use kernel::ffi::{c_int, c_uint, c_ulong};
@@ -28,7 +26,7 @@ declare_trace! {
 
 #[inline]
 fn raw_transaction(t: &Transaction) -> rust_binder_transaction {
-    ptr::from_ref(t).cast_mut().cast()
+    t as *const Transaction as rust_binder_transaction
 }
 
 #[inline]

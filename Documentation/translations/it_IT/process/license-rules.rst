@@ -75,10 +75,7 @@ Sintassi degli identificatori di licenza
    possibile di un file che possa contenere commenti.  Per la maggior parte
    dei file questa è la prima riga, fanno eccezione gli script che richiedono
    come prima riga '#!PATH_TO_INTERPRETER'.  Per questi script l'identificativo
-   di licenza SPDX finisce nella seconda riga.
-
-   Alla riga dell'identificativo di licenza possono seguire, se lo si
-   desidera, una o più righe SPDX-FileCopyrightText.
+   SPDX finisce nella seconda riga.
 
 |
 
@@ -489,13 +486,10 @@ _`MODULE_LICENSE`
 				  file sorgenti.
 
     "Proprietary"		  Questo modulo è rilasciato con licenza
-				  proprietaria. "Proprietary" va inteso
-				  unicamente come "la licenza non è compatibile
-				  con la GPLv2". Questa stringa è solo per i
-				  moduli di terze parti non compatibili con la
-				  GPLv2 e non può essere usata per quelli che
-				  risiedono nei sorgenti del kernel. I moduli
-				  etichettati in
+				  proprietaria. Questa stringa è solo per i
+				  moduli proprietari di terze parti e non può
+				  essere usata per quelli che risiedono nei
+				  sorgenti del kernel. I moduli etichettati in
 				  questo modo stanno contaminando il kernel e
 				  gli viene assegnato un flag 'P'; quando
 				  vengono caricati, il caricatore di moduli del

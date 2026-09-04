@@ -16,8 +16,6 @@
 #include "pcie-cadence-host-common.h"
 #include "../pci-host-common.h"
 
-#include "../../pci.h"
-
 #define LINK_RETRAIN_TIMEOUT HZ
 
 u64 bar_max_size[] = {
@@ -56,12 +54,12 @@ int cdns_pcie_host_wait_for_link(struct cdns_pcie *pcie,
 	int retries;
 
 	/* Check if the link is up or not */
-	for (retries = 0; retries < PCIE_LINK_WAIT_MAX_RETRIES; retries++) {
+	for (retries = 0; retries < LINK_WAIT_MAX_RETRIES; retries++) {
 		if (pcie_link_up(pcie)) {
 			dev_info(dev, "Link up\n");
 			return 0;
 		}
-		msleep(PCIE_LINK_WAIT_SLEEP_MS);
+		usleep_range(LINK_WAIT_USLEEP_MIN, LINK_WAIT_USLEEP_MAX);
 	}
 
 	return -ETIMEDOUT;

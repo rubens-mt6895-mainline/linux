@@ -568,8 +568,10 @@ int rm3100_common_probe(struct device *dev, struct regmap *regmap, int irq)
 						IRQF_ONESHOT,
 						indio_dev->name,
 						indio_dev);
-		if (ret)
+		if (ret < 0) {
+			dev_err(dev, "request irq line failed.\n");
 			return ret;
+		}
 
 		data->drdy_trig = devm_iio_trigger_alloc(dev, "%s-drdy%d",
 							 indio_dev->name,

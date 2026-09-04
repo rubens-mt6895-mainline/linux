@@ -537,16 +537,6 @@ config COMMON_CLK_MT8173_IMGSYS
 	help
 	  This driver supports MediaTek MT8173 imgsys clocks.
 
-config COMMON_CLK_MT8173_MFGTOP
-	tristate "Clock and power driver for MediaTek MT8173 mfgtop"
-	depends on COMMON_CLK_MT8173
-	depends on PM
-	default COMMON_CLK_MT8173
-	select PM_GENERIC_DOMAINS
-	select PM_GENERIC_DOMAINS_OF
-	help
-	  This driver supports MediaTek MT8173 mfgtop clocks and power domain.
-
 config COMMON_CLK_MT8173_MMSYS
        tristate "Clock driver for MediaTek MT8173 mmsys"
        depends on COMMON_CLK_MT8173
@@ -1016,7 +1006,6 @@ config COMMON_CLK_MT8196
 	tristate "Clock driver for MediaTek MT8196"
 	depends on ARM64 || COMPILE_TEST
 	select COMMON_CLK_MEDIATEK
-	select REGMAP_MMIO
 	default ARCH_MEDIATEK
 	help
 	  This driver supports MediaTek MT8196 basic clocks.
@@ -1083,6 +1072,45 @@ config COMMON_CLK_MT8196_VENCSYS
 	default m
 	help
 	  This driver supports MediaTek MT8196 vencsys clocks.
+
+config COMMON_CLK_MT6895
+	bool "Clock driver for MediaTek MT6895"
+	depends on ARM64 || COMPILE_TEST
+	select COMMON_CLK_MEDIATEK
+	default ARCH_MEDIATEK
+	help
+	  This driver supports MediaTek MT6895 basic clocks.
+
+config COMMON_CLK_MT6895_MFGCFG
+	tristate "Clock driver for MediaTek MT6895 mfgcfg"
+	depends on COMMON_CLK_MT6895
+	default COMMON_CLK_MT6895
+	help
+	  This driver supports MediaTek MT6895 mfgcfg (GPU) clocks.
+
+config COMMON_CLK_MT6895_MMSYS
+	tristate "Clock driver for MediaTek MT6895 mmsys"
+	depends on COMMON_CLK_MT6895
+	default COMMON_CLK_MT6895
+	help
+	  This driver supports MediaTek MT6895 mmsys0/1 (multimedia) clocks.
+
+config COMMON_CLK_MT6895_PERI_AO
+bool "Clock driver for MediaTek MT6895 pericfg_ao BTIF gates"
+depends on COMMON_CLK_MT6895
+default COMMON_CLK_MT6895
+help
+  Minimal MT6895 pericfg_ao clock gate driver for the BTIF and APDMA
+  clocks used by the internal Bluetooth transport.
+
+config COMMON_CLK_MT6895_AFE
+	tristate "Clock driver for MediaTek MT6895 audio (AFE) gates"
+	depends on COMMON_CLK_MT6895
+	default COMMON_CLK_MT6895
+	help
+	  This driver supports the MediaTek MT6895 AUDIO_TOP_CON0/1/2 clock
+	  gates ("mediatek,mt6895-afe" provider node), consumed by the
+	  MT6895 ASoC AFE driver.
 
 config COMMON_CLK_MT8365
 	tristate "Clock driver for MediaTek MT8365"

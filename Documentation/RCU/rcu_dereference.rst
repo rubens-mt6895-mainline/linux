@@ -236,7 +236,7 @@ precautions.  To see this, consider the following code fragment::
 	{
 		struct foo *p;
 
-		p = kmalloc_obj(*p);
+		p = kmalloc(...);
 		if (p == NULL)
 			deal_with_it();
 		p->a = 42;  /* Each field in its own cache line. */
@@ -293,7 +293,7 @@ Then one approach is to use locking, for example, as follows::
 	{
 		struct foo *p;
 
-		p = kmalloc_obj(*p);
+		p = kmalloc(...);
 		if (p == NULL)
 			deal_with_it();
 		spin_lock(&p->lock);

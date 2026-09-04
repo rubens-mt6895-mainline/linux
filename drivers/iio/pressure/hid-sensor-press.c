@@ -55,8 +55,9 @@ static const struct iio_chan_spec press_channels[] = {
 
 /* Channel read_raw handler */
 static int press_read_raw(struct iio_dev *indio_dev,
-			  struct iio_chan_spec const *chan,
-			  int *val, int *val2, long mask)
+			      struct iio_chan_spec const *chan,
+			      int *val, int *val2,
+			      long mask)
 {
 	struct press_state *press_state = iio_priv(indio_dev);
 	int report_id = -1;
@@ -80,7 +81,7 @@ static int press_read_raw(struct iio_dev *indio_dev,
 		}
 		if (report_id >= 0) {
 			hid_sensor_power_state(&press_state->common_attributes,
-					       true);
+						true);
 			*val = sensor_hub_input_attr_get_raw_value(
 				press_state->common_attributes.hsdev,
 				HID_USAGE_SENSOR_PRESSURE, address,
@@ -88,7 +89,7 @@ static int press_read_raw(struct iio_dev *indio_dev,
 				SENSOR_HUB_SYNC,
 				min < 0);
 			hid_sensor_power_state(&press_state->common_attributes,
-					       false);
+						false);
 		} else {
 			*val = 0;
 			return -EINVAL;
@@ -122,8 +123,10 @@ static int press_read_raw(struct iio_dev *indio_dev,
 
 /* Channel write_raw handler */
 static int press_write_raw(struct iio_dev *indio_dev,
-			   struct iio_chan_spec const *chan,
-			   int val, int val2, long mask)
+			       struct iio_chan_spec const *chan,
+			       int val,
+			       int val2,
+			       long mask)
 {
 	struct press_state *press_state = iio_priv(indio_dev);
 	int ret = 0;
@@ -151,7 +154,8 @@ static const struct iio_info press_info = {
 
 /* Callback handler to send event after all samples are received and captured */
 static int press_proc_event(struct hid_sensor_hub_device *hsdev,
-			    u32 usage_id, void *priv)
+				unsigned usage_id,
+				void *priv)
 {
 	struct iio_dev *indio_dev = platform_get_drvdata(priv);
 	struct press_state *press_state = iio_priv(indio_dev);
@@ -171,7 +175,7 @@ static int press_proc_event(struct hid_sensor_hub_device *hsdev,
 
 /* Capture samples in local storage */
 static int press_capture_sample(struct hid_sensor_hub_device *hsdev,
-				u32 usage_id,
+				unsigned usage_id,
 				size_t raw_len, char *raw_data,
 				void *priv)
 {
@@ -197,10 +201,10 @@ static int press_capture_sample(struct hid_sensor_hub_device *hsdev,
 
 /* Parse report which is specific to an usage id*/
 static int press_parse_report(struct platform_device *pdev,
-			      struct hid_sensor_hub_device *hsdev,
-			      struct iio_chan_spec *channels,
-			      u32 usage_id,
-			      struct press_state *st)
+				struct hid_sensor_hub_device *hsdev,
+				struct iio_chan_spec *channels,
+				unsigned usage_id,
+				struct press_state *st)
 {
 	int ret;
 
@@ -217,7 +221,7 @@ static int press_parse_report(struct platform_device *pdev,
 	};
 
 	dev_dbg(&pdev->dev, "press %x:%x\n", st->press_attr.index,
-		st->press_attr.report_id);
+			st->press_attr.report_id);
 
 	st->scale_precision = hid_sensor_format_scale(
 				HID_USAGE_SENSOR_PRESSURE,
@@ -236,7 +240,8 @@ static int hid_press_probe(struct platform_device *pdev)
 	struct iio_dev *indio_dev;
 	struct press_state *press_state;
 
-	indio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(struct press_state));
+	indio_dev = devm_iio_device_alloc(&pdev->dev,
+				sizeof(struct press_state));
 	if (!indio_dev)
 		return -ENOMEM;
 	platform_set_drvdata(pdev, indio_dev);
@@ -279,32 +284,32 @@ static int hid_press_probe(struct platform_device *pdev)
 	atomic_set(&press_state->common_attributes.data_ready, 0);
 
 	ret = hid_sensor_setup_trigger(indio_dev, name,
-				       &press_state->common_attributes);
+				&press_state->common_attributes);
 	if (ret) {
 		dev_err(&pdev->dev, "trigger setup failed\n");
 		return ret;
+	}
+
+	ret = iio_device_register(indio_dev);
+	if (ret) {
+		dev_err(&pdev->dev, "device register failed\n");
+		goto error_remove_trigger;
 	}
 
 	press_state->callbacks.send_event = press_proc_event;
 	press_state->callbacks.capture_sample = press_capture_sample;
 	press_state->callbacks.pdev = pdev;
 	ret = sensor_hub_register_callback(hsdev, HID_USAGE_SENSOR_PRESSURE,
-					   &press_state->callbacks);
+					&press_state->callbacks);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "callback reg failed\n");
-		goto error_remove_trigger;
-	}
-
-	ret = iio_device_register(indio_dev);
-	if (ret) {
-		dev_err(&pdev->dev, "device register failed\n");
-		goto error_remove_callback;
+		goto error_iio_unreg;
 	}
 
 	return ret;
 
-error_remove_callback:
-	sensor_hub_remove_callback(hsdev, HID_USAGE_SENSOR_PRESSURE);
+error_iio_unreg:
+	iio_device_unregister(indio_dev);
 error_remove_trigger:
 	hid_sensor_remove_trigger(indio_dev, &press_state->common_attributes);
 	return ret;
@@ -317,8 +322,8 @@ static void hid_press_remove(struct platform_device *pdev)
 	struct iio_dev *indio_dev = platform_get_drvdata(pdev);
 	struct press_state *press_state = iio_priv(indio_dev);
 
-	iio_device_unregister(indio_dev);
 	sensor_hub_remove_callback(hsdev, HID_USAGE_SENSOR_PRESSURE);
+	iio_device_unregister(indio_dev);
 	hid_sensor_remove_trigger(indio_dev, &press_state->common_attributes);
 }
 

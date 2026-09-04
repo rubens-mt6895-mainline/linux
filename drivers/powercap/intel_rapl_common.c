@@ -32,9 +32,6 @@
 
 #define ENERGY_STATUS_MASK		GENMASK(31, 0)
 
-/* Width of the RAPL energy counters, see the *_ENERGY_STATUS_MASK defines */
-#define RAPL_CNTR_WIDTH			32
-
 #define POWER_UNIT_OFFSET		0x00
 #define POWER_UNIT_MASK			GENMASK(3, 0)
 
@@ -755,17 +752,17 @@ EXPORT_SYMBOL_NS_GPL(rapl_default_check_unit, "INTEL_RAPL");
 
 static void power_limit_irq_save_cpu(void *info)
 {
-	struct msr val;
+	u32 l, h = 0;
 	struct rapl_package *rp = (struct rapl_package *)info;
 
 	/* save the state of PLN irq mask bit before disabling it */
-	rdmsrq_safe(MSR_IA32_PACKAGE_THERM_INTERRUPT, &val.q);
+	rdmsr_safe(MSR_IA32_PACKAGE_THERM_INTERRUPT, &l, &h);
 	if (!(rp->power_limit_irq & PACKAGE_PLN_INT_SAVED)) {
-		rp->power_limit_irq = val.l & PACKAGE_THERM_INT_PLN_ENABLE;
+		rp->power_limit_irq = l & PACKAGE_THERM_INT_PLN_ENABLE;
 		rp->power_limit_irq |= PACKAGE_PLN_INT_SAVED;
 	}
-	val.l &= ~PACKAGE_THERM_INT_PLN_ENABLE;
-	wrmsrq_safe(MSR_IA32_PACKAGE_THERM_INTERRUPT, val.q);
+	l &= ~PACKAGE_THERM_INT_PLN_ENABLE;
+	wrmsr_safe(MSR_IA32_PACKAGE_THERM_INTERRUPT, l, h);
 }
 
 /* REVISIT:
@@ -795,7 +792,7 @@ static void package_power_limit_irq_save(struct rapl_package *rp)
  */
 static void package_power_limit_irq_restore(struct rapl_package *rp)
 {
-	struct msr val;
+	u32 l, h;
 
 	if (rp->lead_cpu < 0)
 		return;
@@ -807,14 +804,14 @@ static void package_power_limit_irq_restore(struct rapl_package *rp)
 	if (!(rp->power_limit_irq & PACKAGE_PLN_INT_SAVED))
 		return;
 
-	rdmsrq_safe(MSR_IA32_PACKAGE_THERM_INTERRUPT, &val.q);
+	rdmsr_safe(MSR_IA32_PACKAGE_THERM_INTERRUPT, &l, &h);
 
 	if (rp->power_limit_irq & PACKAGE_THERM_INT_PLN_ENABLE)
-		val.l |= PACKAGE_THERM_INT_PLN_ENABLE;
+		l |= PACKAGE_THERM_INT_PLN_ENABLE;
 	else
-		val.l &= ~PACKAGE_THERM_INT_PLN_ENABLE;
+		l &= ~PACKAGE_THERM_INT_PLN_ENABLE;
 
-	wrmsrq_safe(MSR_IA32_PACKAGE_THERM_INTERRUPT, val.q);
+	wrmsr_safe(MSR_IA32_PACKAGE_THERM_INTERRUPT, l, h);
 }
 
 void rapl_default_set_floor_freq(struct rapl_domain *rd, bool mode)
@@ -1230,7 +1227,6 @@ static u64 rapl_event_update(struct perf_event *event)
 	struct rapl_package_pmu_data *data = event_to_pmu_data(event);
 	u64 prev_raw_count, new_raw_count;
 	s64 delta, sdelta;
-	int shift = 64 - RAPL_CNTR_WIDTH;
 
 	/*
 	 * Follow the generic code to drain hwc->prev_count.
@@ -1247,13 +1243,8 @@ static u64 rapl_event_update(struct perf_event *event)
 	 * Now we have the new raw value and have updated the prev
 	 * timestamp already. We can now calculate the elapsed delta
 	 * (event-)time and add that to the generic event.
-	 *
-	 * Careful, the counter is narrower than u64 and is not
-	 * sign-extended above its physical width.  Shift both values up
-	 * so that the subtraction wraps, then shift the result back down.
 	 */
-	delta = (new_raw_count << shift) - (prev_raw_count << shift);
-	delta >>= shift;
+	delta = new_raw_count - prev_raw_count;
 
 	/*
 	 * Scale delta to smallest unit (2^-32)
@@ -1661,9 +1652,7 @@ void rapl_package_remove_pmu_locked(struct rapl_package *rp)
 			return;
 	}
 
-	if (rapl_pmu.registered)
-		perf_pmu_unregister(&rapl_pmu.pmu);
-
+	perf_pmu_unregister(&rapl_pmu.pmu);
 	memset(&rapl_pmu, 0, sizeof(struct rapl_pmu));
 }
 EXPORT_SYMBOL_NS_GPL(rapl_package_remove_pmu_locked, "INTEL_RAPL");

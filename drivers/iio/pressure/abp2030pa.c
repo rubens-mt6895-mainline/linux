@@ -379,6 +379,7 @@ static int abp2_read_raw(struct iio_dev *indio_dev,
 		default:
 			return -EINVAL;
 		}
+		return IIO_VAL_INT;
 
 	case IIO_CHAN_INFO_SCALE:
 		switch (channel->type) {

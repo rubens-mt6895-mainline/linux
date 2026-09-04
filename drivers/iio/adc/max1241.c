@@ -15,6 +15,10 @@
 #define MAX1241_VAL_MASK GENMASK(11, 0)
 #define MAX1241_SHUTDOWN_DELAY_USEC 4
 
+enum max1241_id {
+	max1241,
+};
+
 struct max1241 {
 	struct spi_device *spi;
 	struct mutex lock;
@@ -162,7 +166,7 @@ static int max1241_probe(struct spi_device *spi)
 	else
 		dev_dbg(dev, "no shutdown pin passed, low-power mode disabled");
 
-	indio_dev->name = "max1241";
+	indio_dev->name = spi_get_device_id(spi)->name;
 	indio_dev->info = &max1241_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->channels = max1241_channels;
@@ -172,10 +176,9 @@ static int max1241_probe(struct spi_device *spi)
 }
 
 static const struct spi_device_id max1241_id[] = {
-	{ .name = "max1241" },
+	{ "max1241", max1241 },
 	{ }
 };
-MODULE_DEVICE_TABLE(spi, max1241_id);
 
 static const struct of_device_id max1241_dt_ids[] = {
 	{ .compatible = "maxim,max1241" },

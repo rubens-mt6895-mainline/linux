@@ -78,7 +78,7 @@ static int sdio_alloc_irq(struct dvobj_priv *dvobj)
 
 	sdio_release_host(func);
 
-	return err ? _FAIL : _SUCCESS;
+	return err?_FAIL:_SUCCESS;
 }
 
 static void sdio_free_irq(struct dvobj_priv *dvobj)
@@ -215,7 +215,7 @@ static void sd_intf_stop(struct adapter *padapter)
 }
 
 
-static struct adapter *rtw_sdio_if1_init(struct dvobj_priv *dvobj)
+static struct adapter *rtw_sdio_if1_init(struct dvobj_priv *dvobj, const struct sdio_device_id  *pdid)
 {
 	int status = _FAIL;
 	struct net_device *pnetdev;
@@ -229,7 +229,7 @@ static struct adapter *rtw_sdio_if1_init(struct dvobj_priv *dvobj)
 	padapter->dvobj = dvobj;
 	dvobj->if1 = padapter;
 
-	padapter->driver_stopped = true;
+	padapter->bDriverStopped = true;
 
 	dvobj->padapters = padapter;
 	padapter->iface_id = 0;
@@ -285,8 +285,8 @@ static struct adapter *rtw_sdio_if1_init(struct dvobj_priv *dvobj)
 	status = _SUCCESS;
 
 free_hal_data:
-	if (status != _SUCCESS)
-		rtw_hal_data_deinit(padapter);
+	if (status != _SUCCESS && padapter->HalData)
+		kfree(padapter->HalData);
 
 	if (status != _SUCCESS) {
 		rtw_wdev_unregister(padapter->rtw_wdev);
@@ -334,8 +334,9 @@ static void rtw_sdio_if1_deinit(struct adapter *if1)
  * notes: drv_init() is called when the bus driver has located a card for us to support.
  *        We accept the new device by returning 0.
  */
-static int rtw_drv_init(struct sdio_func *func,
-			const struct sdio_device_id *id)
+static int rtw_drv_init(
+	struct sdio_func *func,
+	const struct sdio_device_id *id)
 {
 	int status = _FAIL;
 	struct adapter *if1 = NULL;
@@ -345,7 +346,7 @@ static int rtw_drv_init(struct sdio_func *func,
 	if (!dvobj)
 		goto exit;
 
-	if1 = rtw_sdio_if1_init(dvobj);
+	if1 = rtw_sdio_if1_init(dvobj, id);
 	if (!if1)
 		goto free_dvobj;
 
@@ -356,13 +357,10 @@ static int rtw_drv_init(struct sdio_func *func,
 
 	status = sdio_alloc_irq(dvobj);
 	if (status != _SUCCESS)
-		goto free_netdev;
+		goto free_if1;
 
 	status = _SUCCESS;
 
-free_netdev:
-	if (status != _SUCCESS)
-		rtw_unregister_netdevs(dvobj);
 free_if1:
 	if (status != _SUCCESS && if1)
 		rtw_sdio_if1_deinit(if1);
@@ -415,7 +413,7 @@ static int rtw_sdio_suspend(struct device *dev)
 	struct pwrctrl_priv *pwrpriv = dvobj_to_pwrctl(psdpriv);
 	struct adapter *padapter = psdpriv->if1;
 
-	if (padapter->driver_stopped)
+	if (padapter->bDriverStopped)
 		return 0;
 
 	if (pwrpriv->bInSuspend)

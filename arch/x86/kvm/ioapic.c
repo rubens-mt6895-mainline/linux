@@ -33,7 +33,6 @@
 #include "lapic.h"
 #include "irq.h"
 #include "trace.h"
-#include "x86.h"
 
 static int ioapic_service(struct kvm_ioapic *vioapic, int irq,
 		bool line_status);

@@ -5,7 +5,7 @@
  * Copyright (c) 2016, Intel Corporation.
  * Copyright (c) 2019, Martin Kelly.
  *
- * IIO core driver for BMI160, with support for I2C/SPI buses
+ * IIO core driver for BMI160, with support for I2C/SPI busses
  *
  * TODO: magnetometer, hardware FIFO
  */

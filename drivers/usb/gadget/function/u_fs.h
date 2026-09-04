@@ -252,14 +252,8 @@ struct ffs_data {
 
 	unsigned short			strings_count;
 	unsigned short			interfaces_count;
-
-	/*
-	 * eps_count tracks the number of underlying hardware endpoints.
-	 * epfiles_count tracks the total number of VFS endpoint files.
-	 * When companion endpoints are active, epfiles_count > eps_count.
-	 */
 	unsigned short			eps_count;
-	unsigned short			epfiles_count;
+	unsigned short			_pad1;
 
 	/* filled by __ffs_data_got_strings() */
 	/* ids in stringtabs are set in functionfs_bind() */

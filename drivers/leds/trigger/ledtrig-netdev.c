@@ -129,22 +129,6 @@ static void set_baseline_state(struct led_netdev_data *trigger_data)
 		    trigger_data->link_speed == SPEED_10000)
 			blink_on = true;
 
-		if (test_bit(TRIGGER_NETDEV_LINK_25000, &trigger_data->mode) &&
-		    trigger_data->link_speed == SPEED_25000)
-			blink_on = true;
-
-		if (test_bit(TRIGGER_NETDEV_LINK_40000, &trigger_data->mode) &&
-		    trigger_data->link_speed == SPEED_40000)
-			blink_on = true;
-
-		if (test_bit(TRIGGER_NETDEV_LINK_50000, &trigger_data->mode) &&
-		    trigger_data->link_speed == SPEED_50000)
-			blink_on = true;
-
-		if (test_bit(TRIGGER_NETDEV_LINK_100000, &trigger_data->mode) &&
-		    trigger_data->link_speed == SPEED_100000)
-			blink_on = true;
-
 		if (test_bit(TRIGGER_NETDEV_HALF_DUPLEX, &trigger_data->mode) &&
 		    trigger_data->duplex == DUPLEX_HALF)
 			blink_on = true;
@@ -358,10 +342,6 @@ static ssize_t netdev_led_attr_show(struct device *dev, char *buf,
 	case TRIGGER_NETDEV_LINK_2500:
 	case TRIGGER_NETDEV_LINK_5000:
 	case TRIGGER_NETDEV_LINK_10000:
-	case TRIGGER_NETDEV_LINK_25000:
-	case TRIGGER_NETDEV_LINK_40000:
-	case TRIGGER_NETDEV_LINK_50000:
-	case TRIGGER_NETDEV_LINK_100000:
 	case TRIGGER_NETDEV_HALF_DUPLEX:
 	case TRIGGER_NETDEV_FULL_DUPLEX:
 	case TRIGGER_NETDEV_TX:
@@ -398,10 +378,6 @@ static ssize_t netdev_led_attr_store(struct device *dev, const char *buf,
 	case TRIGGER_NETDEV_LINK_2500:
 	case TRIGGER_NETDEV_LINK_5000:
 	case TRIGGER_NETDEV_LINK_10000:
-	case TRIGGER_NETDEV_LINK_25000:
-	case TRIGGER_NETDEV_LINK_40000:
-	case TRIGGER_NETDEV_LINK_50000:
-	case TRIGGER_NETDEV_LINK_100000:
 	case TRIGGER_NETDEV_HALF_DUPLEX:
 	case TRIGGER_NETDEV_FULL_DUPLEX:
 	case TRIGGER_NETDEV_TX:
@@ -425,11 +401,7 @@ static ssize_t netdev_led_attr_store(struct device *dev, const char *buf,
 	     test_bit(TRIGGER_NETDEV_LINK_1000, &mode) ||
 	     test_bit(TRIGGER_NETDEV_LINK_2500, &mode) ||
 	     test_bit(TRIGGER_NETDEV_LINK_5000, &mode) ||
-	     test_bit(TRIGGER_NETDEV_LINK_10000, &mode) ||
-	     test_bit(TRIGGER_NETDEV_LINK_25000, &mode) ||
-	     test_bit(TRIGGER_NETDEV_LINK_40000, &mode) ||
-	     test_bit(TRIGGER_NETDEV_LINK_50000, &mode) ||
-	     test_bit(TRIGGER_NETDEV_LINK_100000, &mode)))
+	     test_bit(TRIGGER_NETDEV_LINK_10000, &mode)))
 		return -EINVAL;
 
 	cancel_delayed_work_sync(&trigger_data->work);
@@ -466,10 +438,6 @@ DEFINE_NETDEV_TRIGGER(link_1000, TRIGGER_NETDEV_LINK_1000);
 DEFINE_NETDEV_TRIGGER(link_2500, TRIGGER_NETDEV_LINK_2500);
 DEFINE_NETDEV_TRIGGER(link_5000, TRIGGER_NETDEV_LINK_5000);
 DEFINE_NETDEV_TRIGGER(link_10000, TRIGGER_NETDEV_LINK_10000);
-DEFINE_NETDEV_TRIGGER(link_25000, TRIGGER_NETDEV_LINK_25000);
-DEFINE_NETDEV_TRIGGER(link_40000, TRIGGER_NETDEV_LINK_40000);
-DEFINE_NETDEV_TRIGGER(link_50000, TRIGGER_NETDEV_LINK_50000);
-DEFINE_NETDEV_TRIGGER(link_100000, TRIGGER_NETDEV_LINK_100000);
 DEFINE_NETDEV_TRIGGER(half_duplex, TRIGGER_NETDEV_HALF_DUPLEX);
 DEFINE_NETDEV_TRIGGER(full_duplex, TRIGGER_NETDEV_FULL_DUPLEX);
 DEFINE_NETDEV_TRIGGER(tx, TRIGGER_NETDEV_TX);
@@ -558,10 +526,6 @@ static umode_t netdev_trig_link_speed_visible(struct kobject *kobj,
 		CHECK_LINK_MODE_ATTR(2500);
 		CHECK_LINK_MODE_ATTR(5000);
 		CHECK_LINK_MODE_ATTR(10000);
-		CHECK_LINK_MODE_ATTR(25000);
-		CHECK_LINK_MODE_ATTR(40000);
-		CHECK_LINK_MODE_ATTR(50000);
-		CHECK_LINK_MODE_ATTR(100000);
 	}
 
 	return 0;
@@ -574,10 +538,6 @@ static struct attribute *netdev_trig_link_speed_attrs[] = {
 	&dev_attr_link_2500.attr,
 	&dev_attr_link_5000.attr,
 	&dev_attr_link_10000.attr,
-	&dev_attr_link_25000.attr,
-	&dev_attr_link_40000.attr,
-	&dev_attr_link_50000.attr,
-	&dev_attr_link_100000.attr,
 	NULL
 };
 
@@ -713,10 +673,6 @@ static void netdev_trig_work(struct work_struct *work)
 			 test_bit(TRIGGER_NETDEV_LINK_2500, &trigger_data->mode) ||
 			 test_bit(TRIGGER_NETDEV_LINK_5000, &trigger_data->mode) ||
 			 test_bit(TRIGGER_NETDEV_LINK_10000, &trigger_data->mode) ||
-			 test_bit(TRIGGER_NETDEV_LINK_25000, &trigger_data->mode) ||
-			 test_bit(TRIGGER_NETDEV_LINK_40000, &trigger_data->mode) ||
-			 test_bit(TRIGGER_NETDEV_LINK_50000, &trigger_data->mode) ||
-			 test_bit(TRIGGER_NETDEV_LINK_100000, &trigger_data->mode) ||
 			 test_bit(TRIGGER_NETDEV_HALF_DUPLEX, &trigger_data->mode) ||
 			 test_bit(TRIGGER_NETDEV_FULL_DUPLEX, &trigger_data->mode);
 		interval = jiffies_to_msecs(

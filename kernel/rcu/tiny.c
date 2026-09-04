@@ -187,9 +187,9 @@ EXPORT_SYMBOL_GPL(call_rcu);
  * Store a grace-period-counter "cookie".  For more information,
  * see the Tree RCU header comment.
  */
-void get_completed_synchronize_rcu_full(struct rcu_gp_seq *gsp)
+void get_completed_synchronize_rcu_full(struct rcu_gp_oldstate *rgosp)
 {
-	gsp->norm = RCU_GET_STATE_COMPLETED;
+	rgosp->rgos_norm = RCU_GET_STATE_COMPLETED;
 }
 EXPORT_SYMBOL_GPL(get_completed_synchronize_rcu_full);
 

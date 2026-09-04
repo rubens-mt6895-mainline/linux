@@ -489,8 +489,11 @@ static int mxc4005_probe(struct i2c_client *client)
 				       iio_trigger_generic_data_rdy_poll,
 				       IRQF_TRIGGER_FALLING | IRQF_NO_THREAD,
 				       "mxc4005_event", data->dready_trig);
-		if (ret)
+		if (ret) {
+			dev_err(&client->dev,
+				"failed to init threaded irq\n");
 			return ret;
+		}
 
 		data->dready_trig->ops = &mxc4005_trigger_ops;
 		iio_trigger_set_drvdata(data->dready_trig, indio_dev);

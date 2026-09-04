@@ -95,6 +95,7 @@ static long cmm_alloc_pages(long nr, long *counter,
 		(*counter)++;
 		spin_unlock(&cmm_lock);
 		nr--;
+		cond_resched();
 	}
 	return nr;
 }
@@ -133,6 +134,7 @@ static long cmm_free_pages(long nr, long *counter, struct cmm_page_array **list)
 		inc = __cmm_free_pages(inc, counter, list);
 		if (inc)
 			break;
+		cond_resched();
 	}
 	return nr + inc;
 }

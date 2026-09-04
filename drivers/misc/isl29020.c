@@ -177,7 +177,7 @@ static void isl29020_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id isl29020_id[] = {
-	{ .name = "isl29020" },
+	{ "isl29020" },
 	{ }
 };
 

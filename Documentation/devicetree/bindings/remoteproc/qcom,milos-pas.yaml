@@ -16,6 +16,7 @@ description:
 properties:
   compatible:
     enum:
+      - qcom,eliza-adsp-pas
       - qcom,milos-adsp-pas
       - qcom,milos-cdsp-pas
       - qcom,milos-mpss-pas
@@ -33,22 +34,12 @@ properties:
       - const: xo
 
   interrupts:
-    items:
-      - description: Watchdog interrupt
-      - description: Fatal interrupt
-      - description: Ready interrupt
-      - description: Handover interrupt
-      - description: Stop acknowledge interrupt
-      - description: Shutdown acknowledge interrupt
+    minItems: 6
+    maxItems: 6
 
   interrupt-names:
-    items:
-      - const: wdog
-      - const: fatal
-      - const: ready
-      - const: handover
-      - const: stop-ack
-      - const: shutdown-ack
+    minItems: 6
+    maxItems: 6
 
   qcom,qmp:
     $ref: /schemas/types.yaml#/definitions/phandle
@@ -68,14 +59,6 @@ properties:
       - description: Memory region for core Firmware authentication
       - description: Memory region for Devicetree Firmware authentication
 
-  qcom,smem-states:
-    maxItems: 1
-    description: States used by the AP to signal the Hexagon core
-
-  qcom,smem-state-names:
-    maxItems: 1
-    description: The names of the state bits used for SMP2P output
-
 required:
   - compatible
   - reg
@@ -87,6 +70,7 @@ allOf:
       properties:
         compatible:
           enum:
+            - qcom,eliza-adsp-pas
             - qcom,milos-adsp-pas
             - qcom,milos-cdsp-pas
     then:
@@ -107,6 +91,7 @@ allOf:
         compatible:
           contains:
             enum:
+              - qcom,eliza-adsp-pas
               - qcom,milos-adsp-pas
     then:
       properties:

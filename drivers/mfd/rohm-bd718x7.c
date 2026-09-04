@@ -7,6 +7,7 @@
 // Datasheet for BD71837MWV available from
 // https://www.rohm.com/datasheet/BD71837MWV/bd71837mwv-e
 
+#include <linux/gpio_keys.h>
 #include <linux/i2c.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
@@ -17,14 +18,34 @@
 #include <linux/regmap.h>
 #include <linux/types.h>
 
-#include "rohm-pwrbutton.h"
+static struct gpio_keys_button button = {
+	.code = KEY_POWER,
+	.gpio = -1,
+	.type = EV_KEY,
+};
+
+static struct gpio_keys_platform_data bd718xx_powerkey_data = {
+	.buttons = &button,
+	.nbuttons = 1,
+	.name = "bd718xx-pwrkey",
+};
 
 static struct mfd_cell bd71837_mfd_cells[] = {
+	{
+		.name = "gpio-keys",
+		.platform_data = &bd718xx_powerkey_data,
+		.pdata_size = sizeof(bd718xx_powerkey_data),
+	},
 	{ .name = "bd71837-clk", },
 	{ .name = "bd71837-pmic", },
 };
 
 static struct mfd_cell bd71847_mfd_cells[] = {
+	{
+		.name = "gpio-keys",
+		.platform_data = &bd718xx_powerkey_data,
+		.pdata_size = sizeof(bd718xx_powerkey_data),
+	},
 	{ .name = "bd71847-clk", },
 	{ .name = "bd71847-pmic", },
 };
@@ -104,13 +125,10 @@ static int bd718xx_init_press_duration(struct regmap *regmap,
 	return 0;
 }
 
-
-
 static int bd718xx_i2c_probe(struct i2c_client *i2c)
 {
 	struct regmap *regmap;
 	struct regmap_irq_chip_data *irq_data;
-	struct irq_domain *irq_domain;
 	int ret;
 	unsigned int chip_type;
 	struct mfd_cell *mfd;
@@ -151,19 +169,20 @@ static int bd718xx_i2c_probe(struct i2c_client *i2c)
 	if (ret)
 		return ret;
 
-	irq_domain = regmap_irq_get_domain(irq_data);
+	ret = regmap_irq_get_virq(irq_data, BD718XX_INT_PWRBTN_S);
+
+	if (ret < 0)
+		return dev_err_probe(&i2c->dev, ret, "Failed to get the IRQ\n");
+
+	button.irq = ret;
 
 	ret = devm_mfd_add_devices(&i2c->dev, PLATFORM_DEVID_AUTO,
-				   mfd, cells, NULL, 0, irq_domain);
+				   mfd, cells, NULL, 0,
+				   regmap_irq_get_domain(irq_data));
 	if (ret)
-		return dev_err_probe(&i2c->dev, ret, "Failed to create subdevices\n");
+		dev_err_probe(&i2c->dev, ret, "Failed to create subdevices\n");
 
-	ret = rohm_register_pwrbutton(&i2c->dev, BD718XX_INT_PWRBTN_S,
-				      "bd718xx-pwrkey", false, irq_domain);
-	if (ret)
-		return ret;
-
-	return 0;
+	return ret;
 }
 
 static const struct of_device_id bd718xx_of_match[] = {

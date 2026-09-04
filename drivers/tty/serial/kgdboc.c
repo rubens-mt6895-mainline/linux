@@ -363,7 +363,7 @@ static int param_set_kgdboc_var(const char *kmessage,
 
 	mutex_lock(&config_mutex);
 
-	strscpy(config, kmessage);
+	strcpy(config, kmessage);
 	/* Chop out \n char as a result of echo */
 	if (len && config[len - 1] == '\n')
 		config[len - 1] = '\0';

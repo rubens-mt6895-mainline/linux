@@ -469,9 +469,9 @@ static int apds9306_read_data(struct apds9306_data *data, int *val, int reg)
 	int status = 0;
 	u8 buff[3];
 
-	PM_RUNTIME_ACQUIRE_AUTOSUSPEND(data->dev, pm);
-	if (PM_RUNTIME_ACQUIRE_ERR(&pm))
-		return PM_RUNTIME_ACQUIRE_ERR(&pm);
+	ret = pm_runtime_resume_and_get(data->dev);
+	if (ret)
+		return ret;
 
 	ret = regmap_field_read(rf->intg_time, &intg_time_idx);
 	if (ret)
@@ -534,6 +534,8 @@ static int apds9306_read_data(struct apds9306_data *data, int *val, int reg)
 	}
 
 	*val = get_unaligned_le24(&buff);
+
+	pm_runtime_put_autosuspend(data->dev);
 
 	return 0;
 }
@@ -1284,7 +1286,8 @@ static int apds9306_probe(struct i2c_client *client)
 						apds9306_irq_handler, IRQF_ONESHOT,
 						"apds9306_event", indio_dev);
 		if (ret)
-			return ret;
+			return dev_err_probe(dev, ret,
+					     "failed to assign interrupt.\n");
 	} else {
 		indio_dev->info = &apds9306_info_no_events;
 		indio_dev->channels = apds9306_channels_without_events;

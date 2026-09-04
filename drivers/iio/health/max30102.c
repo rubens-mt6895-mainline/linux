@@ -577,8 +577,10 @@ static int max30102_probe(struct i2c_client *client)
 					NULL, max30102_interrupt_handler,
 					IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
 					"max30102_irq", indio_dev);
-	if (ret)
+	if (ret) {
+		dev_err(&client->dev, "request irq (%d) failed\n", client->irq);
 		return ret;
+	}
 
 	return iio_device_register(indio_dev);
 }

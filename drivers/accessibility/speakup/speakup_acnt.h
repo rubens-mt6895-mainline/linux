@@ -1,7 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* speakup_acntpc.h - header file for speakups Accent-PC driver. */
-#ifndef _SPEAKUP_ACNT_H
-#define _SPEAKUP_ACNT_H
 
 #define SYNTH_IO_EXTENT	0x02
 
@@ -19,4 +17,3 @@
 #define SYNTH_FULL	'F' /* synth is full. */
 #define SYNTH_ALMOST_EMPTY 'M' /* synth has less than 2 seconds of text left */
 #define SYNTH_SPEAKING	's' /* synth is speaking and has a fare way to go */
-#endif

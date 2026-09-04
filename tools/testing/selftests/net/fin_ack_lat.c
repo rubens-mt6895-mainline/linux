@@ -69,7 +69,7 @@ static void client(int port)
 		lat = timediff(start, end);
 		sum_lat += lat;
 		nr_lat++;
-		if (lat < 1000000)
+		if (lat < 100000)
 			goto close;
 
 		if (getsockname(sock, (struct sockaddr *)&laddr, &len) == -1)
@@ -103,8 +103,7 @@ static void server(int sock, struct sockaddr_in address)
 
 static void sig_handler(int signum)
 {
-	if (child_pid > 0)
-		kill(child_pid, SIGTERM);
+	kill(SIGTERM, child_pid);
 	exit(0);
 }
 
@@ -143,8 +142,6 @@ int main(int argc, char const *argv[])
 
 	fprintf(stderr, "server port: %d\n", ntohs(laddr.sin_port));
 	child_pid = fork();
-	if (child_pid < 0)
-		error(-1, errno, "fork");
 	if (!child_pid)
 		client(ntohs(laddr.sin_port));
 	else

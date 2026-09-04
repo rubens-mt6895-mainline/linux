@@ -70,11 +70,13 @@ allOf:
   - if:
       properties:
         compatible:
-          not:
-            contains:
-              enum:
-                - qcom,sm8475-camcc
-                - qcom,sm8650-camcc
+          contains:
+            enum:
+              - qcom,kaanapali-cambistmclkcc
+              - qcom,kaanapali-camcc
+              - qcom,sc8280xp-camcc
+              - qcom,sm8450-camcc
+              - qcom,sm8550-camcc
     then:
       required:
         - required-opps

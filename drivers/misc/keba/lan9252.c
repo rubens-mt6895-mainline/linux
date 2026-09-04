@@ -339,8 +339,8 @@ out:
 }
 
 static const struct spi_device_id lan9252_id[] = {
-	{ .name = "lan9252" },
-	{ }
+	{"lan9252"},
+	{}
 };
 MODULE_DEVICE_TABLE(spi, lan9252_id);
 

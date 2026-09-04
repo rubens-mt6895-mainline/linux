@@ -1037,13 +1037,8 @@ int ssusb_gadget_suspend(struct ssusb_mtk *ssusb, pm_message_t msg)
 	if (!mtu->gadget_driver)
 		return 0;
 
-	/* Prevent runtime suspend when active connection exists */
-	if (mtu->connected && PMSG_IS_AUTO(msg))
+	if (mtu->connected)
 		return -EBUSY;
-
-	/* Perform soft disconnect for system suspend */
-	if (mtu->softconnect && !PMSG_IS_AUTO(msg))
-		mtu3_dev_on_off(mtu, 0);
 
 	mtu3_dev_suspend(mtu);
 	synchronize_irq(mtu->irq);
@@ -1059,10 +1054,6 @@ int ssusb_gadget_resume(struct ssusb_mtk *ssusb, pm_message_t msg)
 		return 0;
 
 	mtu3_dev_resume(mtu);
-
-	/* Restore soft connect for system resume */
-	if (mtu->softconnect && !PMSG_IS_AUTO(msg))
-		mtu3_dev_on_off(mtu, 1);
 
 	return 0;
 }

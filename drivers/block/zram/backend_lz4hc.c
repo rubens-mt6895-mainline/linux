@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
-
-#define pr_fmt(fmt) "lz4hc: " fmt
-
 #include <linux/kernel.h>
 #include <linux/lz4.h>
 #include <linux/slab.h>
@@ -22,18 +18,8 @@ static void lz4hc_release_params(struct zcomp_params *params)
 
 static int lz4hc_setup_params(struct zcomp_params *params)
 {
-	if (params->level == ZCOMP_PARAM_NOT_SET) {
+	if (params->level == ZCOMP_PARAM_NOT_SET)
 		params->level = LZ4HC_DEFAULT_CLEVEL;
-	} else if (params->level < 1 || params->level > LZ4HC_MAX_CLEVEL) {
-		/*
-		 * Use < 1 rather than < LZ4HC_MIN_CLEVEL here because
-		 * LZ4HC_compress_generic() only clamps levels below 1
-		 * (levels 1 and 2 are valid). LZ4HC_MIN_CLEVEL (3) is
-		 * advisory and not enforced by the library.
-		 */
-		pr_err("invalid compression level %d\n", params->level);
-		return -EINVAL;
-	}
 
 	return 0;
 }

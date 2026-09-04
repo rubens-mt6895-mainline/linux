@@ -2564,8 +2564,8 @@ module_init(ideapad_laptop_init)
 
 static void __exit ideapad_laptop_exit(void)
 {
-	platform_driver_unregister(&ideapad_acpi_driver);
 	ideapad_wmi_driver_unregister();
+	platform_driver_unregister(&ideapad_acpi_driver);
 }
 module_exit(ideapad_laptop_exit)
 

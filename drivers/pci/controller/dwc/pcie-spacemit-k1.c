@@ -20,6 +20,9 @@
 
 #include "pcie-designware.h"
 
+#define PCI_VENDOR_ID_SPACEMIT		0x201f
+#define PCI_DEVICE_ID_SPACEMIT_K1	0x0001
+
 /* Offsets and field definitions for link management registers */
 #define K1_PHY_AHB_IRQ_EN			0x0000
 #define PCIE_INTERRUPT_EN		BIT(0)
@@ -338,7 +341,6 @@ static const struct of_device_id k1_pcie_of_match_table[] = {
 	{ .compatible = "spacemit,k1-pcie", },
 	{ }
 };
-MODULE_DEVICE_TABLE(of, k1_pcie_of_match_table);
 
 static struct platform_driver k1_pcie_driver = {
 	.probe	= k1_pcie_probe,

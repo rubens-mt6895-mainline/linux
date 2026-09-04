@@ -2,9 +2,7 @@
 // Copyright(c) 2018 Intel Corporation. All rights reserved.
 #ifndef _MM_SHUFFLE_H
 #define _MM_SHUFFLE_H
-
 #include <linux/jump_label.h>
-#include <linux/mmzone.h>
 
 #define SHUFFLE_ORDER MAX_PAGE_ORDER
 

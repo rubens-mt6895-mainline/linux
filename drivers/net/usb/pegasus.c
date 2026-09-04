@@ -43,12 +43,21 @@ static bool loopback;
 static bool mii_mode;
 static char *devid;
 
-static struct usb_eth_dev dynamic_id_info = {};
+static struct usb_eth_dev usb_dev_id[] = {
+#define	PEGASUS_DEV(pn, vid, pid, flags)	\
+	{.name = pn, .vendor = vid, .device = pid, .private = flags},
+#define PEGASUS_DEV_CLASS(pn, vid, pid, dclass, flags) \
+	PEGASUS_DEV(pn, vid, pid, flags)
+#include "pegasus.h"
+#undef	PEGASUS_DEV
+#undef	PEGASUS_DEV_CLASS
+	{NULL, 0, 0, 0},
+	{NULL, 0, 0, 0}
+};
 
 static struct usb_device_id pegasus_ids[] = {
 #define	PEGASUS_DEV(pn, vid, pid, flags) \
-	{.match_flags = USB_DEVICE_ID_MATCH_DEVICE, .idVendor = vid, .idProduct = pid, \
-	 .driver_info = (kernel_ulong_t)&(const struct usb_eth_dev) {.name = pn, .private = flags}},
+	{.match_flags = USB_DEVICE_ID_MATCH_DEVICE, .idVendor = vid, .idProduct = pid},
 /*
  * The Belkin F8T012xx1 bluetooth adaptor has the same vendor and product
  * IDs as the Belkin F5D5050, so we need to teach the pegasus driver to
@@ -57,8 +66,7 @@ static struct usb_device_id pegasus_ids[] = {
  */
 #define PEGASUS_DEV_CLASS(pn, vid, pid, dclass, flags) \
 	{.match_flags = (USB_DEVICE_ID_MATCH_DEVICE | USB_DEVICE_ID_MATCH_DEV_CLASS), \
-	.idVendor = vid, .idProduct = pid, .bDeviceClass = dclass, \
-	.driver_info = (kernel_ulong_t)&(const struct usb_eth_dev) {.name = pn, .private = flags}},
+	.idVendor = vid, .idProduct = pid, .bDeviceClass = dclass},
 #include "pegasus.h"
 #undef	PEGASUS_DEV
 #undef	PEGASUS_DEV_CLASS
@@ -394,12 +402,12 @@ static inline int reset_mac(pegasus_t *pegasus)
 	if (i == REG_TIMEOUT)
 		return -ETIMEDOUT;
 
-	if (le16_to_cpu(pegasus->usb->descriptor.idVendor) == VENDOR_LINKSYS ||
-	    le16_to_cpu(pegasus->usb->descriptor.idVendor) == VENDOR_DLINK) {
+	if (usb_dev_id[pegasus->dev_index].vendor == VENDOR_LINKSYS ||
+	    usb_dev_id[pegasus->dev_index].vendor == VENDOR_DLINK) {
 		set_register(pegasus, Gpio0, 0x24);
 		set_register(pegasus, Gpio0, 0x26);
 	}
-	if (le16_to_cpu(pegasus->usb->descriptor.idVendor) == VENDOR_ELCON) {
+	if (usb_dev_id[pegasus->dev_index].vendor == VENDOR_ELCON) {
 		__u16 auxmode;
 		ret = read_mii_word(pegasus, 3, 0x1b, &auxmode);
 		if (ret < 0)
@@ -437,9 +445,9 @@ static int enable_net_traffic(struct net_device *dev, struct usb_device *usb)
 	memcpy(pegasus->eth_regs, data, sizeof(data));
 	ret = set_registers(pegasus, EthCtrl0, 3, data);
 
-	if (le16_to_cpu(pegasus->usb->descriptor.idVendor) == VENDOR_LINKSYS ||
-	    le16_to_cpu(pegasus->usb->descriptor.idVendor) == VENDOR_LINKSYS2 ||
-	    le16_to_cpu(pegasus->usb->descriptor.idVendor) == VENDOR_DLINK) {
+	if (usb_dev_id[pegasus->dev_index].vendor == VENDOR_LINKSYS ||
+	    usb_dev_id[pegasus->dev_index].vendor == VENDOR_LINKSYS2 ||
+	    usb_dev_id[pegasus->dev_index].vendor == VENDOR_DLINK) {
 		u16 auxmode;
 		ret = read_mii_word(pegasus, 0, 0x1b, &auxmode);
 		if (ret < 0)
@@ -1145,7 +1153,7 @@ static int pegasus_probe(struct usb_interface *intf,
 	struct usb_device *dev = interface_to_usbdev(intf);
 	struct net_device *net;
 	pegasus_t *pegasus;
-	const struct usb_eth_dev *info = (const struct usb_eth_dev *)id->driver_info;
+	int dev_index = id - pegasus_ids;
 	int res = -ENOMEM;
 	static const u8 bulk_ep_addr[] = {
 		PEGASUS_USB_EP_BULK_IN | USB_DIR_IN,
@@ -1170,6 +1178,7 @@ static int pegasus_probe(struct usb_interface *intf,
 		goto out;
 
 	pegasus = netdev_priv(net);
+	pegasus->dev_index = dev_index;
 	pegasus->intf = intf;
 
 	res = alloc_urbs(pegasus);
@@ -1197,7 +1206,7 @@ static int pegasus_probe(struct usb_interface *intf,
 	pegasus->msg_enable = netif_msg_init(msg_level, NETIF_MSG_DRV
 				| NETIF_MSG_PROBE | NETIF_MSG_LINK);
 
-	pegasus->features = info ? info->private : DEFAULT_GPIO_RESET;
+	pegasus->features = usb_dev_id[dev_index].private;
 	res = get_interrupt_interval(pegasus);
 	if (res)
 		goto out2;
@@ -1226,7 +1235,7 @@ static int pegasus_probe(struct usb_interface *intf,
 	queue_delayed_work(system_long_wq, &pegasus->carrier_check,
 			   CARRIER_CHECK_DELAY);
 	dev_info(&intf->dev, "%s, %s, %pM\n", net->name,
-		 info ? info->name : "(unknown)", net->dev_addr);
+		 usb_dev_id[dev_index].name, net->dev_addr);
 	return 0;
 
 out3:
@@ -1316,9 +1325,8 @@ static struct usb_driver pegasus_driver = {
 
 static void __init parse_id(char *id)
 {
-	unsigned int vendor_id = 0, device_id = 0, flags = 0;
+	unsigned int vendor_id = 0, device_id = 0, flags = 0, i = 0;
 	char *token, *name = NULL;
-	int dyn_id_index = ARRAY_SIZE(pegasus_ids) - 2;
 
 	token = strsep(&id, ":");
 	if (token)
@@ -1340,12 +1348,14 @@ static void __init parse_id(char *id)
 	if (device_id > 0x10000 || device_id == 0)
 		return;
 
-	dynamic_id_info.name = name;
-	dynamic_id_info.private = flags;
-	pegasus_ids[dyn_id_index].match_flags = USB_DEVICE_ID_MATCH_DEVICE;
-	pegasus_ids[dyn_id_index].idVendor = vendor_id;
-	pegasus_ids[dyn_id_index].idProduct = device_id;
-	pegasus_ids[dyn_id_index].driver_info = (kernel_ulong_t)&dynamic_id_info;
+	for (i = 0; usb_dev_id[i].name; i++);
+	usb_dev_id[i].name = name;
+	usb_dev_id[i].vendor = vendor_id;
+	usb_dev_id[i].device = device_id;
+	usb_dev_id[i].private = flags;
+	pegasus_ids[i].match_flags = USB_DEVICE_ID_MATCH_DEVICE;
+	pegasus_ids[i].idVendor = vendor_id;
+	pegasus_ids[i].idProduct = device_id;
 }
 
 static int __init pegasus_init(void)

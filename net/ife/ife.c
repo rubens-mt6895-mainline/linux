@@ -37,7 +37,7 @@ void *ife_encode(struct sk_buff *skb, u16 metalen)
 	 * where ORIGDATA = original ethernet header ...
 	 */
 	int hdrm = metalen + IFE_METAHDRLEN;
-	int total_push = hdrm + ETH_HLEN;
+	int total_push = hdrm + skb->dev->hard_header_len;
 	struct ifeheadr *ifehdr;
 	struct ethhdr *iethh;	/* inner ether header */
 	int skboff = 0;
@@ -50,9 +50,9 @@ void *ife_encode(struct sk_buff *skb, u16 metalen)
 	iethh = (struct ethhdr *) skb->data;
 
 	__skb_push(skb, total_push);
-	memcpy(skb->data, iethh, ETH_HLEN);
+	memcpy(skb->data, iethh, skb->dev->hard_header_len);
 	skb_reset_mac_header(skb);
-	skboff += ETH_HLEN;
+	skboff += skb->dev->hard_header_len;
 
 	/* total metadata length */
 	ifehdr = (struct ifeheadr *) (skb->data + skboff);
@@ -69,12 +69,12 @@ void *ife_decode(struct sk_buff *skb, u16 *metalen)
 	int total_pull;
 	u16 ifehdrln;
 
-	if (!pskb_may_pull(skb, ETH_HLEN + IFE_METAHDRLEN))
+	if (!pskb_may_pull(skb, skb->dev->hard_header_len + IFE_METAHDRLEN))
 		return NULL;
 
-	ifehdr = (struct ifeheadr *)(skb->data + ETH_HLEN);
+	ifehdr = (struct ifeheadr *) (skb->data + skb->dev->hard_header_len);
 	ifehdrln = ntohs(ifehdr->metalen);
-	total_pull = ETH_HLEN + ifehdrln;
+	total_pull = skb->dev->hard_header_len + ifehdrln;
 
 	if (unlikely(ifehdrln < 2))
 		return NULL;
@@ -82,7 +82,7 @@ void *ife_decode(struct sk_buff *skb, u16 *metalen)
 	if (unlikely(!pskb_may_pull(skb, total_pull + ETH_HLEN)))
 		return NULL;
 
-	ifehdr = (struct ifeheadr *)(skb->data + ETH_HLEN);
+	ifehdr = (struct ifeheadr *)(skb->data + skb->dev->hard_header_len);
 	skb_set_mac_header(skb, total_pull);
 	__skb_pull(skb, total_pull);
 	*metalen = ifehdrln - IFE_METAHDRLEN;

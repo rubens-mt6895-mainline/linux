@@ -263,8 +263,10 @@ static int stm32_ipcc_probe(struct platform_device *pdev)
 		ret = devm_request_threaded_irq(dev, ipcc->irqs[i], NULL,
 						irq_thread[i], IRQF_ONESHOT,
 						dev_name(dev), ipcc);
-		if (ret)
+		if (ret) {
+			dev_err(dev, "failed to request irq %lu (%d)\n", i, ret);
 			goto err_clk;
+		}
 	}
 
 	/* mask and enable rx/tx irq */

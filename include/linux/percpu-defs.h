@@ -65,8 +65,13 @@
  *
  * Archs which need weak percpu definitions should set
  * CONFIG_ARCH_MODULE_NEEDS_WEAK_PER_CPU when necessary.
+ *
+ * To ensure that the generic code observes the above two
+ * restrictions, if CONFIG_DEBUG_FORCE_WEAK_PER_CPU is set weak
+ * definition is used for all cases.
  */
-#if defined(CONFIG_ARCH_MODULE_NEEDS_WEAK_PER_CPU) && defined(MODULE)
+#if (defined(CONFIG_ARCH_MODULE_NEEDS_WEAK_PER_CPU) && defined(MODULE)) || \
+	defined(CONFIG_DEBUG_FORCE_WEAK_PER_CPU)
 /*
  * __pcpu_scope_* dummy variable is used to enforce scope.  It
  * receives the static modifier when it's used in front of
@@ -198,7 +203,7 @@
 /*
  * Accessors and operations.
  */
-#ifndef __ASSEMBLER__
+#ifndef __ASSEMBLY__
 
 /*
  * __verify_pcpu_ptr() verifies @ptr is a percpu pointer without evaluating
@@ -509,5 +514,5 @@ do {									\
 #define this_cpu_inc_return(pcp)	this_cpu_add_return(pcp, 1)
 #define this_cpu_dec_return(pcp)	this_cpu_add_return(pcp, -1)
 
-#endif /* __ASSEMBLER__ */
+#endif /* __ASSEMBLY__ */
 #endif /* _LINUX_PERCPU_DEFS_H */

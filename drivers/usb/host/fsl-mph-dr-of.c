@@ -15,7 +15,6 @@
 #include <linux/clk.h>
 #include <linux/module.h>
 #include <linux/dma-mapping.h>
-#include <linux/regulator/consumer.h>
 
 struct fsl_usb2_dev_data {
 	char *dr_mode;		/* controller mode */
@@ -184,7 +183,7 @@ static int fsl_usb2_mph_dr_of_probe(struct platform_device *ofdev)
 	const struct of_device_id *match;
 	const unsigned char *prop;
 	static unsigned int idx;
-	int i, err;
+	int i;
 
 	if (!of_device_is_available(np))
 		return -ENODEV;
@@ -246,10 +245,6 @@ static int fsl_usb2_mph_dr_of_probe(struct platform_device *ofdev)
 			return -ENODEV;
 		}
 	}
-
-	err = devm_regulator_get_enable_optional(&ofdev->dev, "vbus");
-	if (err)
-		return dev_err_probe(&ofdev->dev, err, "failed to get vbus regulator\n");
 
 	for (i = 0; i < ARRAY_SIZE(dev_data->drivers); i++) {
 		if (!dev_data->drivers[i])

@@ -419,8 +419,6 @@ static int plda_pcie_init_irq_domains(struct plda_pcie_rp *port)
 	return plda_allocate_msi_domains(port);
 }
 
-static void plda_pcie_irq_domain_deinit(struct plda_pcie_rp *pcie);
-
 int plda_init_interrupts(struct platform_device *pdev,
 			 struct plda_pcie_rp *port,
 			 const struct plda_event *event)
@@ -442,17 +440,14 @@ int plda_init_interrupts(struct platform_device *pdev,
 	}
 
 	port->irq = platform_get_irq(pdev, 0);
-	if (port->irq < 0) {
-		ret = -ENODEV;
-		goto err_irq_domain_deinit;
-	}
+	if (port->irq < 0)
+		return -ENODEV;
 
 	for_each_set_bit(i, &port->events_bitmap, port->num_events) {
 		event_irq = irq_create_mapping(port->event_domain, i);
 		if (!event_irq) {
 			dev_err(dev, "failed to map hwirq %d\n", i);
-			ret = -ENXIO;
-			goto err_irq_domain_deinit;
+			return -ENXIO;
 		}
 
 		if (event->request_event_irq)
@@ -464,7 +459,7 @@ int plda_init_interrupts(struct platform_device *pdev,
 
 		if (ret) {
 			dev_err(dev, "failed to request IRQ %d\n", event_irq);
-			goto err_irq_domain_deinit;
+			return ret;
 		}
 	}
 
@@ -472,8 +467,7 @@ int plda_init_interrupts(struct platform_device *pdev,
 					    event->intx_event);
 	if (!port->intx_irq) {
 		dev_err(dev, "failed to map INTx interrupt\n");
-		ret = -ENXIO;
-		goto err_irq_domain_deinit;
+		return -ENXIO;
 	}
 
 	/* Plug the INTx chained handler */
@@ -481,11 +475,8 @@ int plda_init_interrupts(struct platform_device *pdev,
 
 	port->msi_irq = irq_create_mapping(port->event_domain,
 					   event->msi_event);
-	if (!port->msi_irq) {
-		dev_err(dev, "failed to map MSI interrupt\n");
-		ret = -ENXIO;
-		goto err_irq_domain_deinit;
-	}
+	if (!port->msi_irq)
+		return -ENXIO;
 
 	/* Plug the MSI chained handler */
 	irq_set_chained_handler_and_data(port->msi_irq, plda_handle_msi, port);
@@ -494,11 +485,6 @@ int plda_init_interrupts(struct platform_device *pdev,
 	irq_set_chained_handler_and_data(port->irq, plda_handle_event, port);
 
 	return 0;
-
-err_irq_domain_deinit:
-	plda_pcie_irq_domain_deinit(port);
-
-	return ret;
 }
 EXPORT_SYMBOL_GPL(plda_init_interrupts);
 
@@ -573,27 +559,9 @@ EXPORT_SYMBOL_GPL(plda_pcie_setup_iomems);
 
 static void plda_pcie_irq_domain_deinit(struct plda_pcie_rp *pcie)
 {
-	u32 i, event_irq;
-
-	if (pcie->irq > 0)
-		irq_set_chained_handler_and_data(pcie->irq, NULL, NULL);
-	if (pcie->msi_irq > 0)
-		irq_set_chained_handler_and_data(pcie->msi_irq, NULL, NULL);
-	if (pcie->intx_irq > 0)
-		irq_set_chained_handler_and_data(pcie->intx_irq, NULL, NULL);
-
-	for_each_set_bit(i, &pcie->events_bitmap, pcie->num_events) {
-		event_irq = irq_find_mapping(pcie->event_domain, i);
-		if (event_irq) {
-			devm_free_irq(pcie->dev, event_irq, pcie);
-			irq_dispose_mapping(event_irq);
-		}
-	}
-
-	if (pcie->intx_irq)
-		irq_dispose_mapping(pcie->intx_irq);
-	if (pcie->msi_irq)
-		irq_dispose_mapping(pcie->msi_irq);
+	irq_set_chained_handler_and_data(pcie->irq, NULL, NULL);
+	irq_set_chained_handler_and_data(pcie->msi_irq, NULL, NULL);
+	irq_set_chained_handler_and_data(pcie->intx_irq, NULL, NULL);
 
 	irq_domain_remove(pcie->msi.dev_domain);
 

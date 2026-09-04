@@ -229,7 +229,7 @@ int loongson_spi_init_controller(struct device *dev, void __iomem *regs)
 }
 EXPORT_SYMBOL_NS_GPL(loongson_spi_init_controller, "SPI_LOONGSON_CORE");
 
-static int loongson_spi_suspend(struct device *dev)
+static int __maybe_unused loongson_spi_suspend(struct device *dev)
 {
 	struct loongson_spi *loongson_spi;
 	struct spi_controller *controller;
@@ -249,7 +249,7 @@ static int loongson_spi_suspend(struct device *dev)
 	return 0;
 }
 
-static int loongson_spi_resume(struct device *dev)
+static int __maybe_unused loongson_spi_resume(struct device *dev)
 {
 	struct loongson_spi *loongson_spi;
 	struct spi_controller *controller;
@@ -269,8 +269,10 @@ static int loongson_spi_resume(struct device *dev)
 	return 0;
 }
 
-DEFINE_SIMPLE_DEV_PM_OPS(loongson_spi_dev_pm_ops, loongson_spi_suspend, loongson_spi_resume);
-
+const struct dev_pm_ops loongson_spi_dev_pm_ops = {
+	.suspend = loongson_spi_suspend,
+	.resume = loongson_spi_resume,
+};
 EXPORT_SYMBOL_NS_GPL(loongson_spi_dev_pm_ops, "SPI_LOONGSON_CORE");
 
 MODULE_DESCRIPTION("Loongson SPI core driver");

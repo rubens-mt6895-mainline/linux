@@ -2021,11 +2021,8 @@ static int vmcmd_init(void)
 	return sysfs_create_group(&vmcmd_kset->kobj, &vmcmd_attr_group);
 }
 
-static struct shutdown_action vmcmd_action = {
-	.name	= SHUTDOWN_ACTION_VMCMD_STR,
-	.fn	= vmcmd_run,
-	.init	= vmcmd_init
-};
+static struct shutdown_action vmcmd_action = {SHUTDOWN_ACTION_VMCMD_STR,
+					      vmcmd_run, vmcmd_init};
 
 /*
  * stop shutdown action: Stop Linux on shutdown.
@@ -2039,21 +2036,15 @@ static void stop_run(struct shutdown_trigger *trigger)
 	smp_stop_cpu();
 }
 
-static struct shutdown_action stop_action = {
-	.name	= SHUTDOWN_ACTION_STOP_STR,
-	.fn	= stop_run
-};
+static struct shutdown_action stop_action = {SHUTDOWN_ACTION_STOP_STR,
+					     stop_run, NULL};
 
 /* action list */
 
 static struct shutdown_action *shutdown_actions_list[] = {
-	&ipl_action,
-	&reipl_action,
-	&dump_reipl_action,
-	&dump_action,
-	&vmcmd_action,
-	&stop_action
-};
+	&ipl_action, &reipl_action, &dump_reipl_action, &dump_action,
+	&vmcmd_action, &stop_action};
+#define SHUTDOWN_ACTIONS_COUNT (sizeof(shutdown_actions_list) / sizeof(void *))
 
 /*
  * Trigger section
@@ -2066,7 +2057,7 @@ static int set_trigger(const char *buf, struct shutdown_trigger *trigger,
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(shutdown_actions_list); i++) {
+	for (i = 0; i < SHUTDOWN_ACTIONS_COUNT; i++) {
 		if (sysfs_streq(buf, shutdown_actions_list[i]->name)) {
 			if (shutdown_actions_list[i]->init_rc) {
 				return shutdown_actions_list[i]->init_rc;
@@ -2081,10 +2072,8 @@ static int set_trigger(const char *buf, struct shutdown_trigger *trigger,
 
 /* on reipl */
 
-static struct shutdown_trigger on_reboot_trigger = {
-	.name	= ON_REIPL_STR,
-	.action	= &reipl_action
-};
+static struct shutdown_trigger on_reboot_trigger = {ON_REIPL_STR,
+						    &reipl_action};
 
 static ssize_t on_reboot_show(struct kobject *kobj,
 			      struct kobj_attribute *attr, char *page)
@@ -2109,10 +2098,8 @@ static void do_machine_restart(char *__unused)
 void (*_machine_restart)(char *command) = do_machine_restart;
 
 /* on panic */
-static struct shutdown_trigger on_panic_trigger = {
-	.name	= ON_PANIC_STR,
-	.action	= &stop_action
-};
+
+static struct shutdown_trigger on_panic_trigger = {ON_PANIC_STR, &stop_action};
 
 static ssize_t on_panic_show(struct kobject *kobj,
 			     struct kobj_attribute *attr, char *page)
@@ -2136,10 +2123,9 @@ static void do_panic(void)
 }
 
 /* on restart */
-static struct shutdown_trigger on_restart_trigger = {
-	.name	= ON_RESTART_STR,
-	.action	= &stop_action
-};
+
+static struct shutdown_trigger on_restart_trigger = {ON_RESTART_STR,
+	&stop_action};
 
 static ssize_t on_restart_show(struct kobject *kobj,
 			       struct kobj_attribute *attr, char *page)
@@ -2174,10 +2160,8 @@ void do_restart(void *arg)
 }
 
 /* on halt */
-static struct shutdown_trigger on_halt_trigger = {
-	.name	= ON_HALT_STR,
-	.action	= &stop_action
-};
+
+static struct shutdown_trigger on_halt_trigger = {ON_HALT_STR, &stop_action};
 
 static ssize_t on_halt_show(struct kobject *kobj,
 			    struct kobj_attribute *attr, char *page)
@@ -2202,10 +2186,8 @@ static void do_machine_halt(void)
 void (*_machine_halt)(void) = do_machine_halt;
 
 /* on power off */
-static struct shutdown_trigger on_poff_trigger = {
-	.name	= ON_POFF_STR,
-	.action	= &stop_action
-};
+
+static struct shutdown_trigger on_poff_trigger = {ON_POFF_STR, &stop_action};
 
 static ssize_t on_poff_show(struct kobject *kobj,
 			    struct kobj_attribute *attr, char *page)
@@ -2260,7 +2242,7 @@ static void __init shutdown_actions_init(void)
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(shutdown_actions_list); i++) {
+	for (i = 0; i < SHUTDOWN_ACTIONS_COUNT; i++) {
 		if (!shutdown_actions_list[i]->init)
 			continue;
 		shutdown_actions_list[i]->init_rc =

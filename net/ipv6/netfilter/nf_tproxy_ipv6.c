@@ -136,7 +136,7 @@ nf_tproxy_get_sock_v6(struct net *net, struct sk_buff *skb, int thoff,
 		}
 		break;
 	default:
-		DEBUG_NET_WARN_ON_ONCE(1);
+		WARN_ON(1);
 		sk = NULL;
 	}
 

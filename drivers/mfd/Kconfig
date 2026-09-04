@@ -1138,6 +1138,20 @@ config MFD_MT6370
 	  This driver can also be built as a module. If so, the module
 	  will be called "mt6370".
 
+config MFD_MT6375
+	tristate "MediaTek MT6375 SubPMIC"
+	select MFD_CORE
+	select REGMAP_I2C
+	depends on I2C
+	help
+	  Say Y here to enable MT6375 SubPMIC functional support. This is the
+	  multi-slave PMIC (PMU/BM/HK/TCPC on separate I2C addresses) used on
+	  e.g. the Dimensity 8100 reference design: it provides a battery
+	  charger, fuel gauge, ADC, and USB Type-C controller.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called "mt6375".
+
 config MFD_MT6397
 	tristate "MediaTek MT6397 PMIC Support"
 	select MFD_CORE
@@ -1461,6 +1475,7 @@ config MFD_SEC_I2C
 config MFD_SI476X_CORE
 	tristate "Silicon Laboratories 4761/64/68 AM/FM radio."
 	depends on I2C
+	depends on GPIOLIB_LEGACY
 	select MFD_CORE
 	select REGMAP_I2C
 	help
@@ -2207,10 +2222,6 @@ config MFD_STW481X
 	  in various ST Microelectronics and ST-Ericsson embedded
 	  Nomadik series.
 
-config MFD_ROHM_PWRBUTTON
-	tristate
-	select MFD_CORE
-
 config MFD_ROHM_BD718XX
 	tristate "ROHM BD71837 Power Management IC"
 	depends on I2C=y
@@ -2218,7 +2229,6 @@ config MFD_ROHM_BD718XX
 	select REGMAP_I2C
 	select REGMAP_IRQ
 	select MFD_CORE
-	select MFD_ROHM_PWRBUTTON
 	help
 	  Select this option to get support for the ROHM BD71837
 	  Power Management ICs. BD71837 is designed to power processors like
@@ -2232,7 +2242,6 @@ config MFD_ROHM_BD71828
 	select REGMAP_I2C
 	select REGMAP_IRQ
 	select MFD_CORE
-	select MFD_ROHM_PWRBUTTON
 	help
 	  Select this option to get support for the ROHM BD71815, BD71828,
 	  BD71879, BD72720 and BD73900 Power Management ICs (PMICs). These are
@@ -2578,5 +2587,39 @@ config MFD_MAX7360
 	  additional drivers must be enabled in order to use the functionality
 	  of the device.
 
+config MFD_MT6685
+	tristate "MediaTek MT6685 SPMI PMIC"
+	depends on OF && SPMI
+	select MFD_CORE
+	select REGMAP_SPMI
+	select REGMAP_IRQ
+	help
+	  Support for the MediaTek MT6685 companion PMIC found on Dimensity
+	  parts, accessed over the PMIF-wrapped SPMI bus. This core driver
+	  provides a 16-bit register regmap and instantiates the function
+	  children such as the audio DCXO clock buffer controller.
+
+if MFD_MT6685
+
+config MT6685_AUDCLK
+	tristate "MediaTek MT6685 audio DCXO clock control"
+	help
+	  Enables mt6685_set_dcxo() used by the MT6368 ASoC codec driver to
+	  switch the XO_BBCK5 26 MHz external clock buffer that feeds the
+	  codec's CLKSQ digital-audio domain.
+
+endif
+
 endmenu
 endif
+
+config MFD_MTK_SPMI_PMIC
+	tristate "Mediatek SPMI PMICs"
+	depends on OF
+	depends on SPMI
+	select REGMAP_SPMI
+	help
+	  This enables support for the Mediatek SPMI PMICs.
+	  It provides the common regmap and interrupt infrastructure
+	  used by the MT6363/MT6368 function children (auxadc, efuse,
+	  accdet, keys, regulators, sound).

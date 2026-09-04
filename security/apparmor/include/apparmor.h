@@ -36,7 +36,6 @@
 #define AA_CLASS_NS		21
 #define AA_CLASS_IO_URING	22
 
-#define AA_CLASS_NETV9_SKB	30
 #define AA_CLASS_X		31
 #define AA_CLASS_DBUS		32
 

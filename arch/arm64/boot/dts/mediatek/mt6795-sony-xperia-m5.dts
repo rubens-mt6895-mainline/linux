@@ -20,7 +20,6 @@
 		mmc2 = &mmc2;
 		serial0 = &uart0;
 		serial1 = &uart1;
-		serial2 = &uart2;
 	};
 
 	backlight_lcd0: backlight {

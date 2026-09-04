@@ -16,7 +16,6 @@ use core::mem::take;
 
 use kernel::{
     bindings,
-    bits::bit_u8,
     cred::Credential,
     error::Error,
     fs::file::{self, File},
@@ -31,10 +30,9 @@ use kernel::{
     sync::{
         aref::ARef,
         lock::{spinlock::SpinLockBackend, Guard},
-        poll::PollCondVarBox,
-        Arc, ArcBorrow, CondVar, CondVarTimeoutResult, SetOnce, SpinLock, UniqueArc,
+        Arc, ArcBorrow, CondVar, CondVarTimeoutResult, Mutex, SpinLock, UniqueArc,
     },
-    task::{Pid, Task},
+    task::Task,
     uaccess::{UserSlice, UserSliceReader},
     uapi,
     workqueue::{self, Work},
@@ -72,18 +70,9 @@ impl Mapping {
     }
 }
 
-kernel::impl_flags!(
-    /// Represents multiple deferred work flags.
-    #[derive(Debug, Clone, Default, Copy, PartialEq, Eq)]
-    pub struct DeferWorks(u8);
-
-    /// Represents a single deferred work category.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum DeferWork {
-        Flush = bit_u8(0),
-        Release = bit_u8(1),
-    }
-);
+// bitflags for defer_work.
+const PROC_DEFER_FLUSH: u8 = 1;
+const PROC_DEFER_RELEASE: u8 = 2;
 
 #[derive(Copy, Clone)]
 pub(crate) enum IsFrozen {
@@ -132,7 +121,7 @@ pub(crate) struct ProcessInner {
     started_thread_count: u32,
 
     /// Bitmap of deferred work to do.
-    defer_work: DeferWorks,
+    defer_work: u8,
 
     /// Number of transactions to be transmitted before processes in freeze_wait
     /// are woken up.
@@ -162,7 +151,7 @@ impl ProcessInner {
             requested_thread_count: 0,
             max_threads: 0,
             started_thread_count: 0,
-            defer_work: DeferWorks::default(),
+            defer_work: 0,
             outstanding_txns: 0,
             is_frozen: IsFrozen::No,
             sync_recv: false,
@@ -183,26 +172,21 @@ impl ProcessInner {
     /// taken while holding the inner process lock.
     pub(crate) fn push_work(
         &mut self,
-        proc: &Process,
         work: DLArc<dyn DeliverToRead>,
     ) -> Result<(), (BinderError, DLArc<dyn DeliverToRead>)> {
-        let sync = work.should_sync_wakeup();
-
         // Try to find a ready thread to which to push the work.
         if let Some(thread) = self.ready_threads.pop_front() {
             // Push to thread while holding state lock. This prevents the thread from giving up
             // (for example, because of a signal) when we're about to deliver work.
-            match thread.push_work_inner(work, sync) {
+            match thread.push_work(work) {
                 PushWorkRes::Ok => Ok(()),
-                PushWorkRes::OkNotifyPoll => {
-                    proc.notify_poll(sync);
-                    Ok(())
-                }
                 PushWorkRes::FailedDead(work) => Err((BinderError::new_dead(), work)),
             }
         } else if self.is_dead {
             Err((BinderError::new_dead(), work))
         } else {
+            let sync = work.should_sync_wakeup();
+
             // Didn't find a thread waiting for proc work; this can happen
             // in two scenarios:
             // 1. All threads are busy handling transactions
@@ -210,12 +194,17 @@ impl ProcessInner {
             //    the kernel driver soon and pick up this work.
             // 2. Threads are using the (e)poll interface, in which case
             //    they may be blocked on the waitqueue without having been
-            //    added to waiting_threads. For this case, we wake it up
-            //    directly.
+            //    added to waiting_threads. For this case, we just iterate
+            //    over all threads not handling transaction work, and
+            //    wake them all up. We wake all because we don't know whether
+            //    a thread that called into (e)poll is handling non-binder
+            //    work currently.
             self.work.push_back(work);
 
             // Wake up polling threads, if any.
-            proc.notify_poll(sync);
+            for thread in self.threads.values() {
+                thread.notify_if_poll_ready(sync);
+            }
 
             Ok(())
         }
@@ -238,11 +227,11 @@ impl ProcessInner {
 
         // If we decided that we need to push work, push either to the process or to a thread if
         // one is specified.
-        if let Some(pnode) = push {
+        if let Some(node) = push {
             if let Some(thread) = othread {
-                thread.push_work_deferred(pnode);
+                thread.push_work_deferred(node);
             } else {
-                let _ = self.push_work(&node.owner, pnode);
+                let _ = self.push_work(node);
                 // Nothing to do: `push_work` may fail if the process is dead, but that's ok as in
                 // that case, it doesn't care about the notification.
             }
@@ -270,7 +259,7 @@ impl ProcessInner {
         let push = match wrapper {
             None => node
                 .incr_refcount_allow_zero2one(strong, self)?
-                .map(|node| node as DLArc<dyn DeliverToRead>),
+                .map(|node| node as _),
             Some(wrapper) => node.incr_refcount_allow_zero2one_with_wrapper(strong, wrapper, self),
         };
         if let Some(node) = push {
@@ -466,13 +455,7 @@ pub(crate) struct Process {
     // Node references are in a different lock to avoid recursive acquisition when
     // incrementing/decrementing a node in another process.
     #[pin]
-    node_refs: SpinLock<ProcessNodeRefs>,
-
-    // Synchronizes `register_wait` calls to the `PollCondVarBox`.
-    //
-    // The `PollCondVarBox` is not stored here because synchronization is
-    // done for `register_wait` only. Wakeups do not take this lock.
-    poll: SetOnce<PollCondVarBox>,
+    node_refs: Mutex<ProcessNodeRefs>,
 
     // Work node for deferred work item.
     #[pin]
@@ -506,13 +489,13 @@ impl workqueue::WorkItem for Process {
         {
             let mut inner = me.inner.lock();
             defer = inner.defer_work;
-            inner.defer_work = DeferWorks::default();
+            inner.defer_work = 0;
         }
 
-        if defer.contains(DeferWork::Flush) {
+        if defer & PROC_DEFER_FLUSH != 0 {
             me.deferred_flush();
         }
-        if defer.contains(DeferWork::Release) {
+        if defer & PROC_DEFER_RELEASE != 0 {
             me.deferred_release();
         }
     }
@@ -527,13 +510,12 @@ impl Process {
                 cred,
                 inner <- kernel::new_spinlock!(ProcessInner::new(), "Process::inner"),
                 pages <- ShrinkablePageRange::new(&super::BINDER_SHRINKER),
-                node_refs <- kernel::new_spinlock!(ProcessNodeRefs::new(), "Process::node_refs"),
+                node_refs <- kernel::new_mutex!(ProcessNodeRefs::new(), "Process::node_refs"),
                 freeze_wait <- kernel::new_condvar!("Process::freeze_wait"),
                 task: current.group_leader().into(),
                 defer_work <- kernel::new_work!("Process::defer_work"),
                 links <- ListLinks::new(),
                 stats: BinderStats::new(),
-                poll: SetOnce::new(),
             }),
             GFP_KERNEL,
         )?;
@@ -733,7 +715,7 @@ impl Process {
 
     pub(crate) fn push_work(&self, work: DLArc<dyn DeliverToRead>) -> BinderResult {
         // If push_work fails, drop the work item outside the lock.
-        let res = self.inner.lock().push_work(self, work);
+        let res = self.inner.lock().push_work(work);
         match res {
             Ok(()) => Ok(()),
             Err((err, work)) => {
@@ -759,7 +741,7 @@ impl Process {
         } else {
             (0, 0, 0)
         };
-        let node_ref = self.get_node(ptr, cookie, flags, true, thread)?;
+        let node_ref = self.get_node(ptr, cookie, flags as _, true, thread)?;
         let node = node_ref.node.clone();
         self.ctx.set_manager_node(node_ref)?;
         self.inner.lock().is_manager = true;
@@ -879,17 +861,14 @@ impl Process {
         let handle = unused_id.as_u32();
 
         // Do a lookup again as node may have been inserted before the lock was reacquired.
-        let by_node_slot = match refs.by_node.entry(node_ref.node.global_id()) {
-            rbtree::Entry::Vacant(by_node_slot) => by_node_slot,
-            rbtree::Entry::Occupied(handle_ref) => {
-                // The node was inserted by another thread while we didn't hold the lock.
-                let handle = handle_ref.get();
-                let info = refs.by_handle.get_mut(handle).unwrap();
-                info.node_ref().absorb(node_ref);
-                return Ok(*handle);
-            }
-        };
+        if let Some(handle_ref) = refs.by_node.get(&node_ref.node.global_id()) {
+            let handle = *handle_ref;
+            let info = refs.by_handle.get_mut(&handle).unwrap();
+            info.node_ref().absorb(node_ref);
+            return Ok(handle);
+        }
 
+        let gid = node_ref.node.global_id();
         let (info_proc, info_node) = {
             let info_init = NodeRefInfo::new(node_ref, handle, self.into());
             match info.pin_init_with(info_init) {
@@ -905,9 +884,6 @@ impl Process {
         // first thing in `deferred_release`, process cleanup will not miss the items inserted into
         // `refs` below.
         if self.inner.lock().is_dead {
-            // Explicitly drop the lock so that `info_proc` and `info_node` are dropped outside of
-            // the lock.
-            drop(refs_lock);
             return Err(ESRCH);
         }
 
@@ -915,7 +891,7 @@ impl Process {
         // `info_node` into the right node's `refs` list.
         unsafe { info_proc.node_ref2().node.insert_node_info(info_node) };
 
-        by_node_slot.insert(handle, reserve1);
+        refs.by_node.insert(reserve1.into_node(gid, handle));
         by_handle_slot.insert(info_proc, reserve2);
         unused_id.acquire();
         Ok(handle)
@@ -930,13 +906,7 @@ impl Process {
             }
             Ok(node_ref)
         } else {
-            match self.get_node_from_handle(handle, true) {
-                Ok(node_ref) => Ok(node_ref),
-                Err(err) => {
-                    binder_debug!(UserError, "got transaction to invalid handle {handle}");
-                    Err(err.into())
-                }
-            }
+            Ok(self.get_node_from_handle(handle, true)?)
         }
     }
 
@@ -976,19 +946,15 @@ impl Process {
 
         // To preserve original binder behaviour, we only fail requests where the manager tries to
         // increment references on itself.
-        let _to_free_by_handle;
-        let _to_free_by_node;
         let _to_free_freeze_listener;
         let _to_free_freeze_listener_cleanup;
         let mut refs = self.node_refs.lock();
         if let Some(info) = refs.by_handle.get_mut(&handle) {
             if info.node_ref().update(inc, strong) {
                 // Clean up death if there is one attached to this node reference.
-                //
-                // We remove the entire `info` below, so no need to remove `death` from `info`.
-                if let Some(death) = info.death().as_ref() {
+                if let Some(death) = info.death().take() {
                     death.set_cleared(true);
-                    self.remove_from_delivered_deaths(death);
+                    self.remove_from_delivered_deaths(&death);
                 }
 
                 // Remove reference from process tables, and from the node's `refs` list.
@@ -1005,8 +971,8 @@ impl Process {
                     }
                 }
 
-                _to_free_by_handle = refs.by_handle.remove_node(&handle);
-                _to_free_by_node = refs.by_node.remove_node(&id);
+                refs.by_handle.remove(&handle);
+                refs.by_node.remove(&id);
                 refs.handle_is_present.release_id(handle as usize);
 
                 if let Some(shrink) = refs.handle_is_present.shrink_request() {
@@ -1021,7 +987,7 @@ impl Process {
         } else {
             // All refs are cleared in process exit, so this warning is expected in that case.
             if !self.inner.lock().is_dead {
-                binder_debug!(UserError, "no such ref {handle}");
+                pr_warn!("{}: no such ref {handle}\n", self.pid_in_current_ns());
             }
         }
         Ok(())
@@ -1042,7 +1008,7 @@ impl Process {
         if let Ok(Some(node)) = inner.get_existing_node(ptr, cookie) {
             if let Some(node) = node.inc_ref_done_locked(strong, &mut inner) {
                 // This only fails if the process is dead.
-                let _ = inner.push_work(self, node);
+                let _ = inner.push_work(node);
             }
         }
         Ok(())
@@ -1271,26 +1237,16 @@ impl Process {
         // Queue BR_ERROR if we can't allocate memory for the death notification.
         let death = UniqueArc::new_uninit(GFP_KERNEL).inspect_err(|_| {
             thread.push_return_work(BR_ERROR);
-            binder_debug!(
-                DeathNotification,
-                "BC_REQUEST_DEATH_NOTIFICATION failed due to memory allocation failure"
-            );
         })?;
         let mut refs = self.node_refs.lock();
         let Some(info) = refs.by_handle.get_mut(&handle) else {
-            binder_debug!(
-                UserError,
-                "BC_REQUEST_DEATH_NOTIFICATION invalid ref {handle}"
-            );
+            pr_warn!("BC_REQUEST_DEATH_NOTIFICATION invalid ref {handle}\n");
             return Ok(());
         };
 
         // Nothing to do if there is already a death notification request for this handle.
         if info.death().is_some() {
-            binder_debug!(
-                UserError,
-                "BC_REQUEST_DEATH_NOTIFICATION death notification already set"
-            );
+            pr_warn!("BC_REQUEST_DEATH_NOTIFICATION death notification already set\n");
             return Ok(());
         }
 
@@ -1318,11 +1274,6 @@ impl Process {
                 info.node_ref().node.add_death(death, &mut owner_inner);
             }
         }
-        binder_debug!(
-            DeathNotification,
-            "BC_REQUEST_DEATH_NOTIFICATION handle {handle} cookie {:016x}",
-            cookie
-        );
         Ok(())
     }
 
@@ -1332,45 +1283,28 @@ impl Process {
 
         let mut refs = self.node_refs.lock();
         let Some(info) = refs.by_handle.get_mut(&handle) else {
-            binder_debug!(
-                UserError,
-                "BC_CLEAR_DEATH_NOTIFICATION invalid ref {handle}"
-            );
+            pr_warn!("BC_CLEAR_DEATH_NOTIFICATION invalid ref {handle}\n");
             return Ok(());
         };
 
         let Some(death) = info.death().take() else {
-            binder_debug!(
-                UserError,
-                "BC_CLEAR_DEATH_NOTIFICATION death notification not active"
-            );
+            pr_warn!("BC_CLEAR_DEATH_NOTIFICATION death notification not active\n");
             return Ok(());
         };
         if death.cookie != cookie {
             *info.death() = Some(death);
-            binder_debug!(
-                UserError,
-                "BC_CLEAR_DEATH_NOTIFICATION death notification cookie mismatch"
-            );
+            pr_warn!("BC_CLEAR_DEATH_NOTIFICATION death notification cookie mismatch\n");
             return Ok(());
         }
 
         // Update state and determine if we need to queue a work item. We only need to do it when
         // the node is not dead or if the user already completed the death notification.
-        let should_schedule = death.set_cleared(false);
-        drop(refs);
-
-        if should_schedule {
+        if death.set_cleared(false) {
             if let Some(death) = ListArc::try_from_arc_or_drop(death) {
                 let _ = thread.push_work_if_looper(death);
             }
         }
 
-        binder_debug!(
-            DeathNotification,
-            "BC_CLEAR_DEATH_NOTIFICATION handle {handle} cookie {:016x}",
-            cookie
-        );
         Ok(())
     }
 
@@ -1394,7 +1328,6 @@ impl Process {
     }
 
     fn deferred_flush(&self) {
-        binder_debug!(pid = self.task.pid(), OpenClose, "flushing process");
         let inner = self.inner.lock();
         for thread in inner.threads.values() {
             thread.exit_looper();
@@ -1402,8 +1335,6 @@ impl Process {
     }
 
     fn deferred_release(self: Arc<Self>) {
-        binder_debug!(pid = self.task.pid(), OpenClose, "releasing process");
-
         let is_manager = {
             let mut inner = self.inner.lock();
             inner.is_dead = true;
@@ -1451,11 +1382,13 @@ impl Process {
             // SAFETY: We are removing the `NodeRefInfo` from the right node.
             unsafe { info.node_ref2().node.remove_node_info(info) };
 
-            // Clear death notifications from the nodes (that belong to a different process).
-            // No need to remove them from `info` as we clear info below.
-            if let Some(death) = info.death().as_ref() {
-                death.set_cleared(false);
-            }
+            // Remove all death notifications from the nodes (that belong to a different process).
+            let death = if let Some(existing) = info.death().take() {
+                existing
+            } else {
+                continue;
+            };
+            death.set_cleared(false);
         }
 
         // Clean up freeze listeners.
@@ -1591,15 +1524,6 @@ impl Process {
             }
         }
     }
-
-    pub(crate) fn notify_poll(&self, sync: bool) {
-        if let Some(poll) = self.poll.as_ref() {
-            if sync {
-                poll.notify_sync();
-            }
-            poll.notify_all();
-        }
-    }
 }
 
 fn get_frozen_status(data: UserSlice) -> Result {
@@ -1612,13 +1536,13 @@ fn get_frozen_status(data: UserSlice) -> Result {
 
     for ctx in crate::context::get_all_contexts()? {
         ctx.for_each_proc(|proc| {
-            if proc.task.pid() == info.pid as Pid {
+            if proc.task.pid() == info.pid as _ {
                 found = true;
                 let inner = proc.inner.lock();
                 let txns_pending = inner.txns_pending_locked();
-                info.async_recv |= u32::from(inner.async_recv);
-                info.sync_recv |= u32::from(inner.sync_recv);
-                info.sync_recv |= u32::from(txns_pending) << 1;
+                info.async_recv |= inner.async_recv as u32;
+                info.sync_recv |= inner.sync_recv as u32;
+                info.sync_recv |= (txns_pending as u32) << 1;
             }
         });
     }
@@ -1710,9 +1634,7 @@ impl Process {
 /// The file operations supported by `Process`.
 impl Process {
     pub(crate) fn open(ctx: ArcBorrow<'_, Context>, file: &File) -> Result<Arc<Process>> {
-        let proc = Self::new(ctx.into(), ARef::from(file.cred()))?;
-        binder_debug!(OpenClose, "opened process");
-        Ok(proc)
+        Self::new(ctx.into(), ARef::from(file.cred()))
     }
 
     pub(crate) fn release(this: Arc<Process>, _file: &File) {
@@ -1720,8 +1642,8 @@ impl Process {
         let should_schedule;
         {
             let mut inner = this.inner.lock();
-            should_schedule = inner.defer_work == DeferWorks::empty();
-            inner.defer_work |= DeferWork::Release;
+            should_schedule = inner.defer_work == 0;
+            inner.defer_work |= PROC_DEFER_RELEASE;
             binderfs_file = inner.binderfs_file.take();
         }
 
@@ -1738,8 +1660,8 @@ impl Process {
         let should_schedule;
         {
             let mut inner = this.inner.lock();
-            should_schedule = inner.defer_work == DeferWorks::empty();
-            inner.defer_work |= DeferWork::Flush;
+            should_schedule = inner.defer_work == 0;
+            inner.defer_work |= PROC_DEFER_FLUSH;
         }
 
         if should_schedule {
@@ -1797,21 +1719,7 @@ impl Process {
         table: PollTable<'_>,
     ) -> Result<u32> {
         let thread = this.get_current_thread()?;
-        {
-            let poll = loop {
-                if let Some(poll) = this.poll.as_ref() {
-                    break poll;
-                }
-
-                let poll = PollCondVarBox::new(c"Process::poll", kernel::static_lock_class!())?;
-                // Reuse our existing lock to synchronize callers initializing.
-                let _guard = this.node_refs.lock();
-                this.poll.populate(poll);
-            };
-
-            table.register_wait(file, poll);
-        }
-        let (from_proc, mut mask) = thread.poll()?;
+        let (from_proc, mut mask) = thread.poll(file, table);
         if mask == 0 && from_proc && !this.inner.lock().work.is_empty() {
             mask |= bindings::POLLIN;
         }

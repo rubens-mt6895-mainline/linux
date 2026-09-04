@@ -3,8 +3,6 @@
 # Makefile for the linux hypfs filesystem routines.
 #
 
-CONTEXT_ANALYSIS := y
-
 obj-$(CONFIG_S390_HYPFS)	+= hypfs_dbfs.o
 obj-$(CONFIG_S390_HYPFS)	+= hypfs_diag.o
 obj-$(CONFIG_S390_HYPFS)	+= hypfs_diag0c.o

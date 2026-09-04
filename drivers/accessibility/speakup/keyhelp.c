@@ -8,15 +8,14 @@
  */
 
 #include <linux/keyboard.h>
-#include <linux/ctype.h>
 #include "spk_priv.h"
 #include "speakup.h"
 
 #define MAXFUNCS 130
 #define MAXKEYS 256
 static const int num_key_names = MSG_KEYNAMES_END - MSG_KEYNAMES_START + 1;
-static u16 key_offsets[MAXFUNCS], key_data[MAXKEYS];
-static u16 masks[] = { 32, 16, 8, 4, 2, 1 };
+static u_short key_offsets[MAXFUNCS], key_data[MAXKEYS];
+static u_short masks[] = { 32, 16, 8, 4, 2, 1 };
 
 static short letter_offsets[26] = {
 	-1, -1, -1, -1, -1, -1, -1, -1,
@@ -50,7 +49,7 @@ static int cur_item, nstates;
 static void build_key_data(void)
 {
 	u_char *kp, counters[MAXFUNCS], ch, ch1;
-	u16 *p_key, key;
+	u_short *p_key, key;
 	int i, offset = 1;
 
 	nstates = (int)(state_tbl[-1]);
@@ -112,7 +111,7 @@ static void say_key(int key)
 			     spk_msg_get(MSG_KEYNAMES_START + (key - 1)));
 }
 
-static void help_init(void)
+static int help_init(void)
 {
 	char start = SPACE;
 	int i;
@@ -121,27 +120,21 @@ static void help_init(void)
 	state_tbl = spk_our_keys[0] + SHIFT_TBL_SIZE + 2;
 	for (i = 0; i < num_funcs; i++) {
 		char *cur_funcname = spk_msg_get(MSG_FUNCNAMES_START + i);
-		char first_letter;
 
-		first_letter = tolower(*cur_funcname);
-
-		/* Accept only 'a'..'z' to index letter_offsets[] safely */
-		if (first_letter < 'a' || first_letter > 'z')
+		if (start == *cur_funcname)
 			continue;
-
-		if (start == first_letter)
-			continue;
-		start = first_letter;
+		start = *cur_funcname;
 		letter_offsets[(start & 31) - 1] = i;
 	}
+	return 0;
 }
 
-int spk_handle_help(struct vc_data *vc, u_char type, u_char ch, u16 key)
+int spk_handle_help(struct vc_data *vc, u_char type, u_char ch, u_short key)
 {
 	int i, n;
 	char *name;
 	u_char func, *kp;
-	u16 *p_keys, val;
+	u_short *p_keys, val;
 
 	if (letter_offsets[0] == -1)
 		help_init();
@@ -151,7 +144,7 @@ int spk_handle_help(struct vc_data *vc, u_char type, u_char ch, u16 key)
 			synth_printf("%s\n", spk_msg_get(MSG_LEAVING_HELP));
 			return 1;
 		}
-		ch = tolower(ch);
+		ch |= 32; /* lower case */
 		if (ch < 'a' || ch > 'z')
 			return -1;
 		if (letter_offsets[ch - 'a'] == -1) {

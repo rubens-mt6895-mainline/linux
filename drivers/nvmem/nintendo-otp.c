@@ -16,7 +16,7 @@
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/nvmem-provider.h>
-#include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 
 #define HW_OTPCMD  0
@@ -73,7 +73,8 @@ MODULE_DEVICE_TABLE(of, nintendo_otp_of_table);
 static int nintendo_otp_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	const struct nintendo_otp_devtype_data *data;
+	const struct of_device_id *of_id =
+		of_match_device(nintendo_otp_of_table, dev);
 	struct nvmem_device *nvmem;
 	struct nintendo_otp_priv *priv;
 
@@ -93,8 +94,8 @@ static int nintendo_otp_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->regs))
 		return PTR_ERR(priv->regs);
 
-	data = of_device_get_match_data(dev);
-	if (data) {
+	if (of_id->data) {
+		const struct nintendo_otp_devtype_data *data = of_id->data;
 		config.name = data->name;
 		config.size = data->num_banks * BANK_SIZE;
 	}
