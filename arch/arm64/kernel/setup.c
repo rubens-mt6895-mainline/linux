@@ -318,6 +318,29 @@ static int __init xaga_i2c_power_on(void)
 		}
 	}
 
+	/*
+	 * Camera I2C buses: i2c@11d01000 / 11d02000 / 11d05000 / 11d06000 in the
+	 * same wrap S (0x11d07000). Which CLK_IMPS_AP_CLOCK_I2Cx bit belongs to
+	 * which controller is not modelled by the mainline clock driver, so
+	 * instead of guessing we clear the whole CG bank: enabling a clock for an
+	 * otherwise unused controller inside an I2C wrap is harmless and it
+	 * guarantees the four camera buses are clocked. STA is the inverted
+	 * status - bit set means the gate is CLOSED (see the note above).
+	 */
+	{
+		void __iomem *imps = ioremap(0x11d07000, 0x1000);
+		if (imps) {
+			pr_info("XAGA-I2C: cam imps CG STA before=%#x\n",
+				readl(imps + 0xE00));
+			writel(0xffffffff, imps + 0xE04);	/* CLR -> all enabled */
+			pr_info("XAGA-I2C: cam imps CG STA after=%#x (want 0)\n",
+				readl(imps + 0xE00));
+			iounmap(imps);
+		} else {
+			pr_err("XAGA-I2C: cam imps ioremap failed\n");
+		}
+	}
+
 	if (peri) {
 		v = readl(peri + 0x40);
 		pr_info("XAGA-I2C: peri DMA gate=%#x\n", v);
@@ -389,6 +412,40 @@ static int __init xaga_i2c_power_on(void)
 		writel((v & ~0xfUL) | 1UL, gpio + 0x340);		/* GPIO32=SDA6 */
 		pr_info("XAGA-I2C: gpio31/32 mode reg=%#x/%#x\n",
 			readl(gpio + 0x330), readl(gpio + 0x340));
+		/*
+		 * Camera I2C pad muxes. From the i2c5/i2c7/i2c1/i2c6 cases above
+		 * the layout is: mode reg offset = 0x300 + (pin / 8) * 0x10, and
+		 * the pin's 4-bit field sits at (pin % 8) * 4; value 1 is the
+		 * SCL/SDA function.
+		 *   SCL0/SDA0 = GPIO6/7        SCL2/SDA2 = GPIO139/140
+		 *   SCL3/SDA3 = GPIO129/130    SCL4/SDA4 = GPIO137/138
+		 *   SCL8/SDA8 = GPIO133/134    SCL9/SDA9 = GPIO131/132
+		 * Which pair belongs to the controller each sensor sits on is not
+		 * documented anywhere (the vendor camera nodes carry no pinctrl at
+		 * all), so every candidate pair is muxed: whichever bus turns out
+		 * to be the camera one, its pads are already correct, and muxing a
+		 * pin that nothing drives costs nothing.
+		 */
+		{
+			static const unsigned int cam_i2c_pins[] = {
+				6, 7, 129, 130, 131, 132, 133, 134, 137, 138,
+				139, 140,
+			};
+			unsigned int i, n;
+
+			n = (unsigned int)(sizeof(cam_i2c_pins) /
+					   sizeof(cam_i2c_pins[0]));
+			for (i = 0; i < n; i++) {
+				unsigned int pin = cam_i2c_pins[i];
+				u32 off = 0x300 + (pin / 8) * 0x10;
+				u32 sh = (pin % 8) * 4;
+
+				v = readl(gpio + off);
+				writel((v & ~(0xfUL << sh)) | (1UL << sh),
+				       gpio + off);
+			}
+			pr_info("XAGA-I2C: camera i2c pads muxed (%u pins)\n", n);
+		}
 		iounmap(gpio);
 	} else {
 		pr_err("XAGA-I2C: gpio ioremap failed\n");
