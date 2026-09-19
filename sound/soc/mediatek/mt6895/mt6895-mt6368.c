@@ -7,6 +7,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/of_platform.h>
 #include <linux/pm_runtime.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
@@ -1467,6 +1468,22 @@ static struct snd_soc_card mt6895_mt6368_soc_card = {
 	.late_probe = mt6895_mt6368_late_probe,
 };
 
+/* Has the device behind this DT node finished probing? */
+static bool mt6895_mt6368_dev_is_bound(struct device_node *np)
+{
+	struct platform_device *pdev;
+	bool bound;
+
+	pdev = of_find_device_by_node(np);
+	if (!pdev)
+		return false;
+
+	bound = device_is_bound(&pdev->dev);
+	put_device(&pdev->dev);
+
+	return bound;
+}
+
 static int mt6895_mt6368_dev_probe(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = &mt6895_mt6368_soc_card;
@@ -1476,14 +1493,6 @@ static int mt6895_mt6368_dev_probe(struct platform_device *pdev)
 	struct snd_soc_dai_link *dai_link;
 
 	dev_info(&pdev->dev, "%s()\n", __func__);
-
-	/* update speaker type */
-	ret = mtk_spk_update_info(card, pdev);
-	if (ret) {
-		dev_err(&pdev->dev, "%s(), mtk_spk_update_info error\n",
-			__func__);
-		return -EINVAL;
-	}
 
 	/* get platform node */
 	platform_node = of_parse_phandle(pdev->dev.of_node,
@@ -1503,6 +1512,30 @@ static int mt6895_mt6368_dev_probe(struct platform_device *pdev)
 	if (!headset_codec_node) {
 		dev_err(&pdev->dev,
 			"Property 'mediatek,headset-codec' missing or invalid\n");
+		return -EINVAL;
+	}
+
+	/*
+	 * The AFE (mt6895-audio) and the PMIC codec (mt6368-sound) are separate
+	 * platform devices that probe after this driver. Registering the card
+	 * before both are up leaves it on ASoC's unbind list with its DAI links
+	 * already torn down; the later retry from snd_soc_add_component() then
+	 * binds a card whose links have been freed, so it never becomes
+	 * instantiated and /proc/asound/cards stays empty. Wait for them.
+	 */
+	if (!mt6895_mt6368_dev_is_bound(platform_node) ||
+	    !mt6895_mt6368_dev_is_bound(headset_codec_node)) {
+		dev_info(&pdev->dev,
+			 "%s: AFE or codec not probed yet, deferring\n",
+			 __func__);
+		return -EPROBE_DEFER;
+	}
+
+	/* update speaker type */
+	ret = mtk_spk_update_info(card, pdev);
+	if (ret) {
+		dev_err(&pdev->dev, "%s(), mtk_spk_update_info error\n",
+			__func__);
 		return -EINVAL;
 	}
 
@@ -1602,7 +1635,31 @@ static struct platform_driver mt6895_mt6368_driver = {
 	.probe = mt6895_mt6368_dev_probe,
 };
 
-module_platform_driver(mt6895_mt6368_driver);
+static int __init mt6895_mt6368_driver_init(void)
+{
+	return platform_driver_register(&mt6895_mt6368_driver);
+}
+
+static void __exit mt6895_mt6368_driver_exit(void)
+{
+	platform_driver_unregister(&mt6895_mt6368_driver);
+}
+
+/*
+ * Register after the device_initcall batch. The AFE (mt6895-audio) and the
+ * PMIC codec (mt6368-sound) are device_initcall drivers as well, and this
+ * machine driver must not probe ahead of them: snd_soc_register_card() would
+ * park the card on ASoC's unbind list before those components exist, and the
+ * retry that later fires from snd_soc_add_component() binds a card whose DAI
+ * links were already torn down by the failed attempt, so it never becomes
+ * instantiated.
+ */
+#ifndef MODULE
+late_initcall(mt6895_mt6368_driver_init);
+#else
+module_init(mt6895_mt6368_driver_init);
+#endif
+module_exit(mt6895_mt6368_driver_exit);
 
 /* Module information */
 MODULE_DESCRIPTION("MT6895 mt6368 ALSA SoC machine driver");
