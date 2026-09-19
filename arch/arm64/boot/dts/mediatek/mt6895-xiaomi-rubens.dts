@@ -812,6 +812,13 @@
 	panel@1 {
 		compatible = "l11a_38_0a_0a_dsc_cmd,lcm";
 		vibr-supply = <&mt6368_vibr_reg>;
+		/*
+		 * K50 is an OLED panel: it emits its own light and is dimmed
+		 * through the panel's DCS 0x51 command, so there is no
+		 * backlight device to attach.  Drop the inherited LCD
+		 * backlight reference (see the gate_ic note at &i2c6).
+		 */
+		/delete-property/ backlight;
 	};
 };
 
@@ -829,6 +836,16 @@
 &i2c6 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&i2c6_pins_default>;
+
+	/*
+	 * mt6895.dtsi carries the xaga l16 LCD's KTZ8863A bias/backlight IC at
+	 * 0x11 ("lcd-backlight").  rubens has an OLED panel, so that chip is not
+	 * on the board: leaving the node in makes the ktz8863a driver probe,
+	 * fail every I2C write and spam "write data fail" plus a stack dump on
+	 * each brightness change, and it exposes a backlight device that does
+	 * nothing.  Remove it.
+	 */
+	/delete-node/ gate_ic@11;
 
 	speaker_amp_l: speaker_amp@34 {
 compatible = "goodix,tfa9874";
