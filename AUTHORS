@@ -1,0 +1,14 @@
+# AUTHORS
+
+Kernel tree for the Xiaomi Redmi K50 (rubens) on MediaTek MT6895.
+
+## Contributors
+
+- gddhd059 <139611716+gddhd059@users.noreply.github.com>
+  Mainline bring-up for MT6895 / rubens: device tree, FocalTech L11a
+  touchscreen, display, USB (mtu3/tphy), board config and integration.
+
+- Hecheng Yu <kde-yyds@qq.com>
+  Original MT6895 xaga mainline work this tree builds on; the rubens
+  device tree and bring-up direction were derived from his xaga port
+  and from the live stock device tree he pointed us at.
