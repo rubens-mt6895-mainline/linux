@@ -46,7 +46,16 @@
 		 * looping the log and stalling boot. The cinit shell still works
 		 * (it writes directly to /dev/ttyGS0, no console param needed).
 		 */
-		bootargs = "earlycon=mtk8250,0x11001000,115200n8 8250.nr_uarts=4 clk_ignore_unused console=tty0 console=ttyS0,115200n8 printk.devkmsg=on root=/dev/sdc83 rootwait rw";
+		/*
+		 * deferred_probe_timeout=0: the deferred-probe timeout path
+		 * (fw_devlink_drivers_done() at late_initcall + the 10s timeout)
+		 * Oopses and holds device_links_write_lock(), which stalls every
+		 * later device-link/PM user - including the USB and connectivity
+		 * runtime-PM power-on.  Only a timeout > 0 schedules that work, so
+		 * disabling it is the fix (same workaround the rubens-clean branch
+		 * carries).
+		 */
+		bootargs = "earlycon=mtk8250,0x11001000,115200n8 8250.nr_uarts=4 clk_ignore_unused console=tty0 console=ttyS0,115200n8 printk.devkmsg=on deferred_probe_timeout=0 root=/dev/sdc83 rootwait rw";
 		/*
 		 * LK injects this tag into its FDT; our embedded-DTB override would
 		 * lose it. Values dumped from the working Android device:
@@ -122,11 +131,22 @@
 		ranges;
 
 		/*
-		 * Full MT6895 reserved-memory layout, taken verbatim from the
-		 * live device tree (/sys/firmware/fdt) of the running stock
-		 * Android build. These regions are owned by ATF/TEE/SCP/SSPM,
-		 * modem, GPU and the display; the kernel MUST NOT allocate from
-		 * them or early boot crashes on memory corruption.
+		 * Full MT6895 reserved-memory layout, taken from the live device
+		 * tree of the running stock Android build. These regions are
+		 * owned by ATF/TEE/SCP/SSPM, modem, GPU and the display; the
+		 * kernel MUST NOT allocate from them or early boot crashes on
+		 * memory corruption.
+		 *
+		 * Re-verified entry by entry against that dump (out/orig_live.dts,
+		 * captured from this very device): 17 of the entries below used to
+		 * carry a wrong address or size, and two regions were missing
+		 * entirely - the real GPUEB window (0x7c300000, which had been
+		 * pointing into TEE secure memory at 0x7c600000), tee-secmem,
+		 * sspm_ap-shared, consys_gps_emi, the SSPM/MCUPM/protpgd carve-outs,
+		 * the 0x7f00_0000 block, the two md_mem_usage sizes, the TEE high
+		 * address cells (0x02 -> 0x03), dramc-rk0/rk1 and
+		 * debug_met_res-ram. The mblock-N prefixes are LK's node names and
+		 * are NOT in address order, so only the (address, size) pairs matter.
 		 */
 
 		wifi_reserved: mblock-45-shared-dma-pool_wifi-reserve-memory_dma {
@@ -140,12 +160,12 @@
 			compatible = "mediatek,consys_emi_reserved";
 		};
 		mblock-43-sspm_ap-shared {
-			reg = <0x00 0x7c4f0000 0x00 0x110000>;
+			reg = <0x00 0x7c1f0000 0x00 0x110000>;
 			no-map;
 			compatible = "mediatek,sspm_ap-shared";
 		};
 		mblock-42-consys_gps_emi {
-			reg = <0x00 0x7cf00000 0x00 0x100000>;
+			reg = <0x00 0x7c500000 0x00 0x100000>;
 			no-map;
 			compatible = "mediatek,consys_gps_emi";
 		};
@@ -165,7 +185,7 @@
 			compatible = "mediatek,me_GPUmputab_PMA";
 		};
 		mblock-38-me_GPUEB_SHARED {
-			reg = <0x00 0x7c600000 0x00 0x200000>;
+			reg = <0x00 0x7c300000 0x00 0x200000>;
 			no-map;
 			compatible = "mediatek,me_GPUEB_SHARED";
 		};
@@ -190,7 +210,7 @@
 			compatible = "mediatek,md_mem_usage";
 		};
 		mblock-33-md_mem_usage {
-			reg = <0x00 0xd4000000 0x00 0x7870000>;
+			reg = <0x00 0xd4000000 0x00 0x77d0000>;
 			no-map;
 			compatible = "mediatek,md_mem_usage";
 		};
@@ -200,7 +220,7 @@
 			compatible = "mediatek,md_mem_usage";
 		};
 		mblock-31-md_mem_usage {
-			reg = <0x00 0xd0000000 0x00 0x2710000>;
+			reg = <0x00 0xd0000000 0x00 0x2630000>;
 			no-map;
 			compatible = "mediatek,md_mem_usage";
 		};
@@ -239,7 +259,7 @@
 			compatible = "mediatek,SCP-reserved";
 		};
 		mblock-23-platform-debug_dfdmcu_dump {
-			reg = <0x00 0xfd000000 0x00 0x280000>;
+			reg = <0x00 0xfc000000 0x00 0x280000>;
 			no-map;
 			compatible = "mediatek,platform-debug_dfdmcu_dump";
 		};
@@ -249,12 +269,12 @@
 			compatible = "mediatek,crypto_hw";
 		};
 		mblock-21-security_tee_ree {
-			reg = <0x02 0x3f000000 0x00 0xc00000>;
+			reg = <0x03 0x3f000000 0x00 0xc00000>;
 			no-map;
 			compatible = "mediatek,security_tee_ree";
 		};
 		mblock-20-security_tee_log {
-			reg = <0x02 0x3fc00000 0x00 0x20000>;
+			reg = <0x03 0x3fc00000 0x00 0x20000>;
 			no-map;
 			compatible = "mediatek,security_tee_log";
 		};
@@ -264,17 +284,17 @@
 			compatible = "mediatek,tee-reserved";
 		};
 		mblock-18-tee-secmem {
-			reg = <0x00 0x7c800000 0x00 0x700000>;
+			reg = <0x00 0x7c600000 0x00 0x700000>;
 			no-map;
 			compatible = "mediatek,tee-secmem";
 		};
 		mblock-17-MCUPM-reserved {
-			reg = <0x00 0x7f300000 0x00 0x100000>;
+			reg = <0x00 0x7cd00000 0x00 0x100000>;
 			no-map;
 			compatible = "mediatek,MCUPM-reserved";
 		};
 		mblock-16-SSPM-reserved {
-			reg = <0x00 0x7fe3f000 0x00 0x180000>;
+			reg = <0x00 0x7f080000 0x00 0x180000>;
 			no-map;
 			compatible = "mediatek,SSPM-reserved";
 		};
@@ -284,12 +304,12 @@
 			compatible = "mediatek,BL31-reserved";
 		};
 		mblock-14-platform_mtksmmu_protpgd {
-			reg = <0x00 0x7d000000 0x00 0x2200000>;
+			reg = <0x00 0x7ce00000 0x00 0x2200000>;
 			no-map;
 			compatible = "mediatek,platform_mtksmmu_protpgd";
 		};
 		mblock-13-me_cmdq_reserved {
-			reg = <0x02 0x3fe00000 0x00 0x100000>;
+			reg = <0x03 0x3fe00000 0x00 0x100000>;
 			no-map;
 			compatible = "mediatek,me_cmdq_reserved";
 		};
@@ -329,16 +349,16 @@
 			compatible = "mediatek,log_store";
 		};
 		mblock-5-gz-log {
-			reg = <0x00 0x7f200000 0x00 0x41000>;
+			reg = <0x00 0x7f000000 0x00 0x41000>;
 			compatible = "mediatek,gz-log";
 		};
 		mblock-4-unmap2 {
-			reg = <0x00 0x7f400000 0x00 0x400000>;
+			reg = <0x00 0x7f200000 0x00 0x400000>;
 			no-map;
 			compatible = "mediatek,unmap2";
 		};
 		mblock-3-gz {
-			reg = <0x00 0x7f800000 0x00 0x600000>;
+			reg = <0x00 0x7f600000 0x00 0x900000>;
 			no-map;
 			compatible = "mediatek,gz";
 		};
@@ -348,9 +368,19 @@
 			compatible = "mediatek,emi_mbist_buf";
 		};
 		mblock-1-dramc-rk0 {
-			reg = <0x02 0x3fffe000 0x00 0x2000>;
+			reg = <0x01 0xbfffe000 0x00 0x2000>;
 			no-map;
 			compatible = "mediatek,dramc-rk0";
+		};
+		mblock-2-dramc-rk1 {
+			reg = <0x03 0x3fffe000 0x00 0x2000>;
+			no-map;
+			compatible = "mediatek,dramc-rk1";
+		};
+		mblock-42-debug_met_res-ram {
+			reg = <0x00 0x9f7ff000 0x00 0x800000>;
+			no-map;
+			compatible = "mediatek,debug_met_res-ram";
 		};
 		/* pstore/ramoops, matches the downstream Android config */
 		ramoops@48090000 {
@@ -533,12 +563,14 @@
 	};
 };
 
-/* GPUEB shared memory: the live FDT reserves 2MB at 0x7c600000 as
- * mblock-38-me_GPUEB_SHARED. gpueb_reserved_mem.c can use it directly
- * when gpueb_mem_addr/size are present on the gpueb node.
+/* GPUEB shared memory: LK's live FDT reserves 2MB at 0x7c300000 as
+ * mblock-39-me_GPUEB_SHARED (0x7c600000 is mblock-19-tee-secmem - pointing the
+ * GPUEB at it would have the GPU's event buffer scribbling into TEE secure
+ * memory). gpueb_reserved_mem.c can use it directly when gpueb_mem_addr/size
+ * are present on the gpueb node.
  */
 &gpueb {
-	gpueb_mem_addr = <0x0 0x7c600000>;
+	gpueb_mem_addr = <0x0 0x7c300000>;
 	gpueb_mem_size = <0x0 0x200000>;
 };
 
@@ -553,22 +585,50 @@
  */
 
 /*
- * USB gadget (peripheral-only) bring-up:
- * - dr_mode="peripheral": mtu3 takes the gadget path only. The dual-role path
- *   needs the Type-C role switch to report a role and a VBUS session, but the
- *   MT6375 TCPC driver does not probe on this port (no typec/tcpm messages at
- *   all), so the UDC stayed in "not attached" and the host never saw us. In
- *   peripheral mode mtu3 registers the gadget directly and never waits for the
- *   role switch, which is what we want for a serial console.
- * - The t-phy software role switch and the Type-C endpoint are kept so the
- *   connector's phandle still resolves; they are unused in this mode.
- * - vbus-supply is dropped with the host path (it is the OTG 5V boost).
+ * USB dual-role (OTG) bring-up.
+ *
+ * The gadget half gives us the ttyGS0 serial console; the host half lets a USB
+ * keyboard/mouse be plugged in through an OTG adapter, which matters because
+ * the touchscreen is not working yet.
+ *
+ * Wiring follows the in-tree mt8390-genio-common.dtsi pattern: mtu3 registers a
+ * usb_role_switch for its own fwnode (the boolean "usb-role-switch" property is
+ * what turns that on), and tcpm finds it by walking the fwnode graph from the
+ * Type-C connector's endpoint (typec_con_hs <-> mtu3_hs_role_sw, already paired
+ * in mt6895.dtsi) and drives it on every attach/detach.
+ *
+ * Three things mtu3 demands in OTG/HOST mode that are easy to get wrong
+ * (mtu3_plat.c: ssusb_rscs_init):
+ *   - maximum-speed: the USB3 half has never been brought up here, and
+ *     keyboards/mice are USB2, so stay on high-speed.
+ *   - vbus-supply = the MT6375 OTG 5V boost, i.e. otg_vbus.  otg_sx->vbus is
+ *     fetched with a non-optional devm_regulator_get(), and in host mode this
+ *     is what actually powers the peripheral.
+ *   - **do NOT add `wakeup-source`.**  ssusb_wakeup_of_property_parse() returns
+ *     early only when that property is absent; with it present mtu3 insists on
+ *     a `mediatek,syscon-wakeup` phandle (SPM wakeup register) and the probe
+ *     dies with -ENOENT ("failed to parse uwk property"), which takes the whole
+ *     Type-C stack down with it: usb0 never binds, so tcpm's fwnode role-switch
+ *     lookup fails to resolve and the TCPC defers forever
+ *     ("mt6375-tcpc: Failed to register tcpci port"), and both the UDC and the
+ *     Type-C port disappear.  We don't need USB remote wakeup.
  */
 &ssusb {
 	status = "okay";
-	dr_mode = "peripheral";
+	dr_mode = "otg";
+	usb-role-switch;
+	/*
+	 * port/rubens-clean uses "device", not "peripheral", and sets the same
+	 * value on the xHCI node below.  Their OTG host mode is known to work,
+	 * so follow them rather than our own guess.
+	 */
+	role-switch-default-mode = "device";
 	maximum-speed = "high-speed";
-	vusb33-supply = <&vusb33>;
+	/* Their rubens DTS: the PHY 3.3V rail is the real MT6368 VUSB. */
+	vusb33-supply = <&mt6368_vusb>;
+	vbus-supply = <&otg_vbus>;
+	/* Their rubens DTS sets this on ssusb for host mode. */
+	mediatek,force-vbus;
 
 	port {
 		mtu3_hs_role_sw: endpoint {
@@ -577,8 +637,17 @@
 	};
 };
 
+/*
+ * Host half: xhci-mtk binds here once mtu3 switches to the host role.
+ * role-switch-default-mode belongs here too - without it the xHCI node has no
+ * role of its own and the software role switch never drives the PHY into host
+ * mode, which is exactly the state we were stuck in (mtu3 held D+/D- with
+ * U2PHY set_mode(6) == PHY_MODE_USB_DEVICE while the tcpc said host).
+ */
 &usb_host {
-	status = "disabled";
+	status = "okay";
+	role-switch-default-mode = "device";
+	vusb33-supply = <&mt6368_vusb>;
 };
 
 &usbphy {

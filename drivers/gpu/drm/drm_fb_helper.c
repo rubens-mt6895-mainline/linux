@@ -189,26 +189,28 @@ int drm_fb_helper_blank(int blank, struct fb_info *info)
 	if (oops_in_progress)
 		return -EBUSY;
 
+	/*
+	 * rubens: never turn the display off from the fbdev blank path.
+	 *
+	 * We run X on /dev/fb0 (the vendor DRM atomic commit from a userspace
+	 * client does not push frames on this board, see the fbdev X config), so
+	 * a framebuffer blank is the only way in - and it tears the whole pipeline
+	 * down: drm_client_modeset_dpms(OFF) -> mtk_dsi_encoder_disable ->
+	 * lcm_disable/lcm_unprepare switch the panel off.  The later unblank
+	 * (lcm_prepare/lcm_enable) runs to completion, the fbconsole present loop
+	 * keeps committing, and the picture still never comes back - the phone
+	 * stays on a permanent black screen until it is rebooted.
+	 *
+	 * Blanking is only a power saving measure here, and with no input device
+	 * attached there is nothing that could wake the screen up anyway, so keep
+	 * it on.
+	 */
 	switch (blank) {
 	/* Display: On; HSync: On, VSync: On */
 	case FB_BLANK_UNBLANK:
 		drm_fb_helper_dpms(info, DRM_MODE_DPMS_ON);
 		break;
-	/* Display: Off; HSync: On, VSync: On */
-	case FB_BLANK_NORMAL:
-		drm_fb_helper_dpms(info, DRM_MODE_DPMS_STANDBY);
-		break;
-	/* Display: Off; HSync: Off, VSync: On */
-	case FB_BLANK_HSYNC_SUSPEND:
-		drm_fb_helper_dpms(info, DRM_MODE_DPMS_STANDBY);
-		break;
-	/* Display: Off; HSync: On, VSync: Off */
-	case FB_BLANK_VSYNC_SUSPEND:
-		drm_fb_helper_dpms(info, DRM_MODE_DPMS_SUSPEND);
-		break;
-	/* Display: Off; HSync: Off, VSync: Off */
-	case FB_BLANK_POWERDOWN:
-		drm_fb_helper_dpms(info, DRM_MODE_DPMS_OFF);
+	default:
 		break;
 	}
 	return 0;

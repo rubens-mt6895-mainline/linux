@@ -1435,3 +1435,6 @@ config TOUCHSCREEN_NVT_DEBUG_FS
 	  over DSI at runtime).
 
 endif
+
+# Xiaomi Redmi K50 (rubens) FocalTech L11a SPI touchscreen
+source "drivers/input/touchscreen/L11a_fts_spi/Kconfig"
