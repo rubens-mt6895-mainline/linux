@@ -624,6 +624,17 @@
 	 */
 	role-switch-default-mode = "device";
 	maximum-speed = "high-speed";
+	/*
+	 * USB2 PHY only.  The configurations on this board that are known to
+	 * work (the wochgn rubens tree and the stock-derived DTB we dumped out
+	 * of boot_b) leave the USB3 super-speed PHY out completely, and the
+	 * working u2port tuning is eye-vrt/eye-term = 3, not the 7 that came
+	 * from the xaga downstream DTS.  With <&u3port PHY_TYPE_USB3> listed
+	 * and eye tuning 7 the controller ends up unable to see anything on
+	 * the port: xHCI sits at Link=RxDetect / Speed=0 with PP set while a
+	 * device is attached, so host mode never enumerates.
+	 */
+	phys = <&u2port PHY_TYPE_USB2>;
 	/* Their rubens DTS: the PHY 3.3V rail is the real MT6368 VUSB. */
 	vusb33-supply = <&mt6368_vusb>;
 	vbus-supply = <&otg_vbus>;
@@ -656,10 +667,22 @@
 
 &u2port {
 	status = "okay";
-	/* PHY tuning from downstream xaga DTS */
-	mediatek,eye-vrt = <0x07>;
-	mediatek,eye-term = <0x07>;
+	/*
+	 * rubens PHY tuning: eye-vrt/eye-term = 3.  The xaga downstream tree
+	 * used 7 here and we copied it, but that is what stopped the port from
+	 * detecting any peripheral (see the phys note at &ssusb).
+	 */
+	mediatek,eye-vrt = <0x03>;
+	mediatek,eye-term = <0x03>;
 	mediatek,discth = <0x0b>;
+};
+
+/*
+ * mt6895.dtsi enables the USB3 super-speed PHY by default; rubens does not use
+ * it (maximum-speed is high-speed) and the working configurations leave it out.
+ */
+&u3port {
+	status = "disabled";
 };
 
 /* ConnFem ANTSEL pinmux and FEM function mapping */

@@ -402,7 +402,9 @@ void tfa_set_query_info(struct tfa_device *tfa)
 		tfa->spkr_count = 1;
 		tfa->is_probus_device = 1;
 		tfa->daimap = Tfa98xx_DAI_TDM;
-		tfa->ext_dsp = 0;
+		/* no external softDSP available: drive the internal CF DSP
+		 * (free-running internal-clk DSP, app downloaded from the cnt) */
+		tfa->ext_dsp = -1;
 		tfa9874_ops(&tfa->dev_ops); /* register device operations */
 		break;
 	case 0x78:
