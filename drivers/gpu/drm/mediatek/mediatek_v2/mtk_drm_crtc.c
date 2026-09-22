@@ -10207,24 +10207,25 @@ int mtk_drm_crtc_create(struct drm_device *drm_dev,
 		return -ENOMEM;
 
 	for (zpos = 0; zpos < mtk_crtc->layer_nr; zpos++) {
+		/*
+		 * No plane is registered as DRM_PLANE_TYPE_CURSOR on purpose.
+		 * The topmost OVL layer of this CRTC is what a compositor picks
+		 * as a hardware cursor, but on the DSI output here that layer
+		 * takes the framebuffer and never scans it out: KWin programs a
+		 * valid 64x64 ARGB cursor buffer and its position, and nothing
+		 * ever becomes visible.  Without a cursor plane compositors draw
+		 * the pointer into the primary plane instead, which works.
+		 */
 		type = (zpos == 0) ? DRM_PLANE_TYPE_PRIMARY
-				   : (zpos == (mtk_crtc->layer_nr - 1UL))
-					     ? DRM_PLANE_TYPE_CURSOR
-					     : DRM_PLANE_TYPE_OVERLAY;
+				   : DRM_PLANE_TYPE_OVERLAY;
 		ret = mtk_plane_init(drm_dev, &mtk_crtc->planes[zpos], zpos,
 				     BIT(pipe), type);
 		if (ret)
 			return ret;
 	}
 
-	if (mtk_crtc->layer_nr == 1UL) {
-		ret = mtk_drm_crtc_init(drm_dev, mtk_crtc,
-					&mtk_crtc->planes[0].base, NULL, pipe);
-	} else {
-		ret = mtk_drm_crtc_init(
-			drm_dev, mtk_crtc, &mtk_crtc->planes[0].base,
-			&mtk_crtc->planes[mtk_crtc->layer_nr - 1UL].base, pipe);
-	}
+	ret = mtk_drm_crtc_init(drm_dev, mtk_crtc, &mtk_crtc->planes[0].base,
+				NULL, pipe);
 	if (ret < 0)
 		return ret;
 
