@@ -3751,6 +3751,47 @@ int btmtk_allocate_hci_device(struct btmtk_dev *bdev, int hci_bus_type)
 	hdev->bus = hci_bus_type;
 	hci_set_drvdata(hdev, bdev);
 
+	/*
+	 * The MTK BTIF controller answers "Read Local Supported Commands"
+	 * (HCI_OP_READ_LOCAL_COMMANDS) only during the first probe-time
+	 * handshake; the regular HCI power-on init on this port never issues
+	 * it, so hdev->commands[] stays all-zero.  The core LE event-mask
+	 * logic (hci_le_set_event_mask_sync) keys "LE Advertising Report"
+	 * on hdev->commands[26] & 0x08 (LE Set Scan Enable), so with a zero
+	 * table that event is never unmasked and the firmware silently drops
+	 * every advertising report even though LE scans return Success.
+	 * Fill in the controller's real capability table (dumped from a
+	 * working controller via HCI_OP_READ_LOCAL_COMMANDS) so the LE
+	 * event mask is computed correctly.
+	 */
+	{
+		static const u8 mtk_connac_commands[64] = {
+			0xBF, 0xFF, 0xFF, 0x03, 0xCC, 0xFF, 0xFF, 0xFF,
+			0x3F, 0xFF, 0xFC, 0x1F, 0xF2, 0x0F, 0xE8, 0xFE,
+			0x3F, 0xF7, 0x83, 0xFF, 0x1C, 0x00, 0x04, 0x07,
+			0x61, 0xF7, 0xFF, 0xFF, 0x7F, 0x38, 0x00, 0x00,
+			0xFE, 0xC0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x07,
+			0xE0, 0xFF, 0xFF, 0xFF, 0x07, 0x3C, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		};
+		memcpy(hdev->commands, mtk_connac_commands, sizeof(hdev->commands));
+
+		/*
+		 * Same port quirk as the command table above: the host SSP/SC support
+		 * bits never end up set, so hci_powered_update_sync() skips
+		 * HCI_OP_WRITE_SSP_MODE and BR/EDR links stay encrypted with E0.  A peer
+		 * holding a P-256 authenticated link key (type 0x08) then gets marked
+		 * FIPS by hci_encrypt_change_evt(), hci_conn_check_link_mode() demands
+		 * AES-CCM and every reconnect dies with br-connection-aborted-by-local.
+		 * The controller does report SSP (features[0][6] & LMP_SIMPLE_PAIR) and
+		 * SC (features[2][1] & LMP_SC) support, so flagging the host side here
+		 * lets the normal power-on path send WRITE_SSP_MODE + WRITE_SC_SUPPORT.
+		 */
+		hci_dev_set_flag(hdev, HCI_SSP_ENABLED);
+		hci_dev_set_flag(hdev, HCI_SC_ENABLED);
+	}
+
 	/* HCI_PRIMARY = 0x00 */
 
 	bdev->hdev = hdev;
@@ -4131,7 +4172,7 @@ static int main_exit(void)
 
 
 /*
- * Mainline xaga: the Bluetooth address is stored in the nvdata partition as
+ * Mainline rubens: the Bluetooth address is stored in the nvdata partition as
  * APCFG/APRDEB/BT_Addr.  The initramfs copies it to
  * /lib/firmware/mediatek/mt6895/BT_Addr before switch_root.  We set the HCI
  * address as soon as the file appears (before bluetoothd starts), and also

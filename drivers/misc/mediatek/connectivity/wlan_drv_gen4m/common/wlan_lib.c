@@ -5272,7 +5272,7 @@ uint32_t wlanLoadManufactureData(IN struct ADAPTER
 	} else
 		prAdapter->fgEnable5GBand = FALSE;
 
-	/* xaga bring-up: force 5G enabled; NVRAM parsing may not enable it on 7.2 */
+	/* rubens bring-up: force 5G enabled; NVRAM parsing may not enable it on 7.2 */
 	prAdapter->fgEnable5GBand = TRUE;
 	DBGLOG(INIT, INFO, "Enable5GBand = %d, Detail = [%d,%d,%d]",
 		prAdapter->fgEnable5GBand,
