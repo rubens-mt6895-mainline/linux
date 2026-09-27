@@ -4,8 +4,8 @@
  *
  * Codename: rubens
  *
- * Hardware is shared with the sibling rubens (Redmi Note 11T Pro+ / POCO X4 GT /
- * K50i): same SoC, PMICs, audio codec, connectivity and amplifiers.  What
+ * Hardware is shared with the sibling xaga (Redmi Note 11T Pro / POCO X4 GT /
+ * Redmi K50i): same SoC, PMICs, audio codec, connectivity and amplifiers.  What
  * differs is the OLED panel, the framebuffer geometry and a few pads.
  */
 
