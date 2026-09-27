@@ -4,7 +4,7 @@
  *
  * Codename: rubens
  *
- * Hardware is shared with the sibling xaga (Redmi Note 11T Pro+ / POCO X4 GT /
+ * Hardware is shared with the sibling rubens (Redmi Note 11T Pro+ / POCO X4 GT /
  * K50i): same SoC, PMICs, audio codec, connectivity and amplifiers.  What
  * differs is the OLED panel, the framebuffer geometry and a few pads.
  */
@@ -14,6 +14,7 @@
 #include "mt6895-pinfunc.h"
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 
 / {
 	model = "Xiaomi Redmi K50";
@@ -89,7 +90,7 @@
 	 * This board is rubens (K50): LK's framebuffer window is
 	 * 0xfcb3f000..0xfffff000 (vram 0x34c0000 = three 1440x3200x4 buffers of
 	 * 0x1194000 each, stride 5760). The buffer LK actually scans out is the
-	 * last one in the window - the same relation that was verified on xaga
+	 * last one in the window - the same relation that was verified on rubens
 	 * (0xfe14f000 + 0x1eb0000 - 0xa3c000 = 0xff5c3000), so here
 	 * 0xfcb3f000 + 0x34c0000 - 0x1194000 = 0xfe6b3000.
 	 */
@@ -629,7 +630,7 @@
 	 * work (the wochgn rubens tree and the stock-derived DTB we dumped out
 	 * of boot_b) leave the USB3 super-speed PHY out completely, and the
 	 * working u2port tuning is eye-vrt/eye-term = 3, not the 7 that came
-	 * from the xaga downstream DTS.  With <&u3port PHY_TYPE_USB3> listed
+	 * from the rubens downstream DTS.  With <&u3port PHY_TYPE_USB3> listed
 	 * and eye tuning 7 the controller ends up unable to see anything on
 	 * the port: xHCI sits at Link=RxDetect / Speed=0 with PP set while a
 	 * device is attached, so host mode never enumerates.
@@ -668,7 +669,7 @@
 &u2port {
 	status = "okay";
 	/*
-	 * rubens PHY tuning: eye-vrt/eye-term = 3.  The xaga downstream tree
+	 * rubens PHY tuning: eye-vrt/eye-term = 3.  The rubens downstream tree
 	 * used 7 here and we copied it, but that is what stopped the port from
 	 * detecting any peripheral (see the phys note at &ssusb).
 	 */
@@ -819,7 +820,7 @@
  */
 /*
  * Our board is rubens (K50) and its panel is the l11a (1440x3200, DSC, command
- * mode) - mt6895.dtsi only describes the xaga l16 panel (1080x2460 video mode).
+ * mode) - mt6895.dtsi only describes the rubens l16 panel (1080x2460 video mode).
  * Override the compatible so the l11a driver binds; the GPIOs of the node are
  * shared between the two Xiaomi MT6895 boards.
  *
@@ -854,6 +855,95 @@
 			drive-strength = <4>;
 		};
 	};
+
+	/*
+	 * Fingerprint sensor (side-mounted).  Same SPI3_A pads as the rubens
+	 * FPC1540 part: CLK=GPIO217, CS=GPIO218, MI=GPIO219, MO=GPIO220.
+	 * rubens (K50) ships a Goodix gf_spi sensor; it powers from the
+	 * 3.3 V mt6368_vfp rail (rubens's FPC used the 1.8 V mt6368_vibr).
+	 */
+	fp_pins_default: fp-pins-default {
+		pins_clk {
+			pinmux = <PINMUX_GPIO217__FUNC_SPI3_A_CLK>;
+			drive-strength = <MTK_DRIVE_6mA>;
+			bias-disable;
+		};
+		pins_cs {
+			pinmux = <PINMUX_GPIO218__FUNC_SPI3_A_CSB>;
+			drive-strength = <MTK_DRIVE_6mA>;
+			bias-disable;
+		};
+		pins_mi {
+			pinmux = <PINMUX_GPIO219__FUNC_SPI3_A_MI>;
+			drive-strength = <MTK_DRIVE_6mA>;
+			bias-disable;
+			input-enable;
+		};
+		pins_mo {
+			pinmux = <PINMUX_GPIO220__FUNC_SPI3_A_MO>;
+			drive-strength = <MTK_DRIVE_6mA>;
+			bias-disable;
+		};
+	};
+
+	/* hardware reset line, GPIO216 (active low) */
+	fp_pins_reset: fp-pins-reset {
+		pins_reset {
+			pinmux = <PINMUX_GPIO216__FUNC_GPIO216>;
+			bias-disable;
+		};
+	};
+
+	/* finger-detect EINT, GPIO136 (pulled up, idle high) */
+	fp_pins_eint: fp-pins-eint {
+		pins_eint {
+			pinmux = <PINMUX_GPIO136__FUNC_GPIO136>;
+			bias-pull-up;
+			input-enable;
+			input-schmitt-enable;
+		};
+	};
+};
+
+&spi3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&fp_pins_default>;
+	status = "okay";
+
+	/*
+	 * Goodix gf_spi fingerprint sensor on SPI3_A (GPIO217-220) - the same
+	 * wiring the stock tree uses (spi3@11013000 / fingerprint@0).  This
+	 * driver is a raw-transport bridge (/dev/goodix_fp) driven by the
+	 * userspace trustlet loader, so it owns the transport plus the three
+	 * side resources the sensor needs:
+	 *   vdd        mt6368_vfp, the adjustable sensor rail (1.2-3.5 V)
+	 *   reset      GPIO216, active low
+	 *   finger irq GPIO136 EINT, rising edge (idle high, pull-up)
+	 */
+	goodix-fp@0 {
+		compatible = "goodix,gf-spi";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+
+		/*
+		 * xaga/xagapro ship an FPC or a Goodix sensor on the same SPI3_A
+		 * footprint: the FPC one is fed from mt6368_vibr at 1.8 V, the
+		 * Goodix one from mt6368_vfp at 3.3 V.  Reset is asserted LOW and
+		 * the sensor runs with the line left HIGH (same as the fpc1540
+		 * driver on these pads), so active-high + the driver's
+		 * assert-low/release-high pulse leaves it released.
+		 */
+		vdd-supply = <&mt6368_vfp_reg>;
+		reset-gpios = <&pio 216 GPIO_ACTIVE_HIGH>;
+
+		interrupt-parent = <&pio>;
+		interrupts = <136 IRQ_TYPE_EDGE_RISING>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&fp_pins_reset>, <&fp_pins_eint>;
+
+		status = "okay";
+	};
 };
 
 &i2c6 {
@@ -861,7 +951,7 @@
 	pinctrl-0 = <&i2c6_pins_default>;
 
 	/*
-	 * mt6895.dtsi carries the xaga l16 LCD's KTZ8863A bias/backlight IC at
+	 * mt6895.dtsi carries the rubens l16 LCD's KTZ8863A bias/backlight IC at
 	 * 0x11 ("lcd-backlight").  rubens has an OLED panel, so that chip is not
 	 * on the board: leaving the node in makes the ktz8863a driver probe,
 	 * fail every I2C write and spam "write data fail" plus a stack dump on
@@ -1136,7 +1226,7 @@ pinmux = <PINMUX_GPIO204__FUNC_AUD_DAT_MOSI0>, <PINMUX_GPIO205__FUNC_AUD_DAT_MOS
 input-schmitt-enable;
 bias-disable;
 };
-/* CH34/3rd-DAC downlink data lane; on xaga this pad is wired to the
+/* CH34/3rd-DAC downlink data lane; on rubens this pad is wired to the
  * codec's AIF data input and carries all DL frames to the MT6368. */
 pins_dat_ch34 {
 pinmux = <PINMUX_GPIO206__FUNC_AUD_DAT_MOSI2>;

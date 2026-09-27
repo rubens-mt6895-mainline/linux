@@ -232,7 +232,7 @@
 	 * imp_iic_wrap_c (bit0), and the apdma gate in pericfg_ao (bit5).
 	 * There is no mt6895 clock driver yet, so these fixed clocks only
 	 * satisfy the i2c-mt65xx probe (clk_prepare_enable = no-op). The real
-	 * gates are forced on by xaga_i2c_power_on() in setup.c (LK also uses
+	 * gates are forced on by mtk_i2c_power_on() in setup.c (LK also uses
 	 * i2c5 for the off-mode mt6375 charging animation). The main rate is
 	 * used to derive SCL timing; 26MHz matches the default mux parent.
 	 */
@@ -322,6 +322,32 @@
 		#clock-cells = <0>;
 		clock-frequency = <26000000>;
 		clock-output-names = "spi2-bclk";
+	};
+
+	/*
+	 * SPI3 (fingerprint). Same fixed-clock stub approach as spi2.  The
+	 * fingerprint sensor (FPC1540 on rubens, Goodix gf_spi on rubens) sits
+	 * behind the hardware SPI3 controller on the SPI3_A pads (GPIO217-220).
+	 */
+	clk_spi3_parent: clock-spi3-parent {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <26000000>;
+		clock-output-names = "spi3-parent";
+	};
+
+	clk_spi3_sel: clock-spi3-sel {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <26000000>;
+		clock-output-names = "spi3-sel";
+	};
+
+	clk_spi3: clock-spi3 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <26000000>;
+		clock-output-names = "spi3-bclk";
 	};
 
 	/*
@@ -1189,7 +1215,7 @@
 				reg = <0x5a>;
 				status = "okay";
 				reset-gpios = <&pio 117 GPIO_ACTIVE_HIGH>;
-				/* params from the stock xaga DT */
+				/* params from the stock rubens DT */
 				aw8697_vib_mode = <0>;
 				aw8697_vib_bst_vol_ram = <0x0e>;
 				aw8697_vib_bst_vol_rtp = <0x0e>;
@@ -1212,7 +1238,7 @@
 							  0x00 0x01 0x00 0x01 0x02>;
 				vib_effect_id_boundary = <0x0a>;
 				vib_effect_max = <0xc5>;
-				/* dual-BOM: AW86927 params (stock xaga DT) */
+				/* dual-BOM: AW86927 params (stock rubens DT) */
 				aw86927_vib_bst_vol_rtp = <0x53>;
 				aw86927_vib_bst_vol_ram = <0x53>;
 				aw86927_vib_bst_vol_default = <0x53>;
@@ -1241,6 +1267,18 @@
 			};
 		};
 
+		spi3: spi@11013000 {
+			compatible = "mediatek,mt6983-spi";
+			mediatek,pad-select = <0>;
+			reg = <0x11013000 0x100>;
+			interrupts = <GIC_SPI 206 IRQ_TYPE_LEVEL_HIGH 0>;
+			clocks = <&clk_spi3_parent>, <&clk_spi3_sel>, <&clk_spi3>;
+			clock-names = "parent-clk", "sel-clk", "spi-clk";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
 		spi2: spi@11012000 {
 			compatible = "mediatek,mt6983-spi";
 			mediatek,pad-select = <0>;
@@ -1254,7 +1292,7 @@
 
 			/*
 			 * rubens (K50) uses a FocalTech L11a panel touch controller,
-			 * not the xaga NT36672C: the node is ported from the stock DT
+			 * not the rubens NT36672C: the node is ported from the stock DT
 			 * (fts@0 under spi2@11012000) and bound by the L11a_fts_spi
 			 * driver ("st,spi").
 			 *
@@ -1814,7 +1852,7 @@
 						regulator-always-on;
 					};
 
-					VFP {
+					mt6368_vfp_reg: VFP {
 						regulator-compatible = "VFP";
 						regulator-name = "mt6368_vfp";
 						regulator-min-microvolt = <0x124f80>;
