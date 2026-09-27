@@ -494,6 +494,20 @@ config MISC_RTSX
 	tristate
 	default MISC_RTSX_PCI || MISC_RTSX_USB
 
+config GOODIX_FP
+	tristate "Goodix gf_spi fingerprint sensor SPI driver"
+	depends on SPI
+	depends on REGULATOR
+	depends on GPIOLIB
+	help
+	  SPI transport driver for the Goodix gf_spi capacitive fingerprint
+	  sensor fitted to the rubens (Redmi K50, MT6895). It owns the sensor's
+	  3.3 V power rail, reset and finger-IRQ lines and exposes a raw SPI
+	  transfer ioctl (/dev/goodix_fp) for the userspace trustlet loader
+	  (ta_host) that runs the vendor "goodix-fp" TA as a plain aarch64 ELF.
+
+	  If unsure, say N.
+
 config HISI_HIKEY_USB
 	tristate "USB GPIO Hub on HiSilicon Hikey 960/970 Platform"
 	depends on (OF && GPIOLIB) || COMPILE_TEST
@@ -652,11 +666,11 @@ source "drivers/misc/keba/Kconfig"
 source "drivers/misc/amd-sbi/Kconfig"
 source "drivers/misc/rp1/Kconfig"
 
-config XAGA_MARKER_WRITER
-	bool "xaga boot-stage marker writer (XAGR ring)"
+config RUBENS_MARKER_WRITER
+	bool "rubens boot-stage marker writer (XAGR ring)"
 	depends on ARM64
 	help
-	  xaga (Redmi Note 11T Pro / POCO X4 GT / Redmi K50i, MT6895) boot
+	  rubens (Redmi Note 11T Pro / POCO X4 GT / Redmi K50i, MT6895) boot
 	  trace writer. Armed at the head of arm64 setup_arch (the earliest
 	  point the MMU maps the region) and mirrors every printk() into a
 	  circular XAGR ring in the log_store reserved DRAM region
@@ -664,9 +678,6 @@ config XAGA_MARKER_WRITER
 	  into the expdb partition by LK's PL_LOG_STORE on the next boot, so
 	  a boot hang can be located even when the kernel dies before any
 	  console is up.
-
-	  Only the xaga defconfig fragment enables this; leave it off for
-	  other devices.
 endmenu
 
 source "drivers/misc/mediatek/Kconfig"
