@@ -3703,7 +3703,7 @@ static void mtk_crtc_cmdq_timeout_heal(struct work_struct *work)
 	struct cmdq_pkt *pkt = NULL;
 	u16 eof = mtk_crtc->gce_obj.event[EVENT_STREAM_EOF];
 
-	DDPPR_ERR("XAGA-HEAL: re-arming STREAM_EOF event %u\n", eof);
+	DDPPR_ERR("RUBENS-HEAL: re-arming STREAM_EOF event %u\n", eof);
 	mtk_crtc_pkt_create(&pkt, &mtk_crtc->base,
 				mtk_crtc->gce_obj.client[CLIENT_DSI_CFG]);
 	if (pkt) {
@@ -3738,7 +3738,7 @@ static void mtk_crtc_cmdq_timeout_cb(struct cmdq_cb_data data)
 	mtk_drm_crtc_dump(crtc);
 
 #ifndef DRM_CMDQ_DISABLE
-	xaga_dump_disp("cmdq_timeout");
+	mtk_dump_disp("cmdq_timeout");
 	if ((mtk_crtc->trig_loop_cmdq_handle) &&
 			(mtk_crtc->trig_loop_cmdq_handle->cl)) {
 		cl = (struct cmdq_client *)mtk_crtc->trig_loop_cmdq_handle->cl;
@@ -3755,7 +3755,7 @@ static void mtk_crtc_cmdq_timeout_cb(struct cmdq_cb_data data)
 	/* CMDQ driver would not trigger aee when timeout. */
 	DDPAEE("%s cmdq timeout, crtc id:%d\n", __func__, drm_crtc_index(crtc));
 
-	/* XAGA-HEAL: at most one recovery per 500 ms, queued to process
+	/* RUBENS-HEAL: at most one recovery per 500 ms, queued to process
 	 * context (timeout_cb may run from the cmdq irq path). */
 	if (!in_interrupt() &&
 	    (time_after(jiffies, mtk_crtc->self_heal_ticks) ||
@@ -4108,7 +4108,7 @@ int mtk_crtc_fill_fb_para(struct mtk_drm_crtc *mtk_crtc)
 	if (_parse_tag_videolfb(&vramsize, &fb_base, &fps) < 0) {
 		DDPPR_ERR("Can't access buffer info from dts\n");
 	} else {
-		pr_err("XAGA-FBIOMMU: parse OK fb_base=%pa vram=0x%x fps=%d\n",
+		pr_err("RUBENS-FBIOMMU: parse OK fb_base=%pa vram=0x%x fps=%d\n",
 			&fb_base, vramsize, fps);
 		fb_info->fb_pa = fb_base;
 		fb_info->width = ALIGN_TO_32(mtk_crtc->base.mode.hdisplay);
@@ -5789,10 +5789,10 @@ void mtk_crtc_config_default_path(struct mtk_drm_crtc *mtk_crtc)
 	cfg.bpc = mtk_crtc->bpc;
 	cfg.p_golden_setting_context = __get_golden_setting_context(mtk_crtc);
 
-	pr_err("XAGA-STAGE config_default_path: mode %dx%d vrefresh=%d bpc=%d is_dual_pipe=%d\n",
+	pr_err("RUBENS-STAGE config_default_path: mode %dx%d vrefresh=%d bpc=%d is_dual_pipe=%d\n",
 	       cfg.w, cfg.h, cfg.vrefresh, cfg.bpc,
 	       mtk_crtc->is_dual_pipe ? 1 : 0);
-	xaga_dump_disp("before_path_config");
+	mtk_dump_disp("before_path_config");
 
 #ifndef DRM_CMDQ_DISABLE
 	if (priv->data->mmsys_id == MMSYS_MT6983 ||
@@ -5856,8 +5856,8 @@ void mtk_crtc_config_default_path(struct mtk_drm_crtc *mtk_crtc)
 	cmdq_pkt_flush(cmdq_handle);
 	cmdq_pkt_destroy(cmdq_handle);
 
-	pr_err("XAGA-STAGE config_default_path DONE (cmdq flushed)\n");
-	xaga_dump_disp("after_path_config");
+	pr_err("RUBENS-STAGE config_default_path DONE (cmdq flushed)\n");
+	mtk_dump_disp("after_path_config");
 }
 
 static void mtk_crtc_all_layer_off(struct mtk_drm_crtc *mtk_crtc,
@@ -6103,11 +6103,11 @@ void mtk_drm_crtc_enable(struct drm_crtc *crtc)
 	/*for dual pipe*/
 	mtk_crtc_prepare_dual_pipe(mtk_crtc);
 
-	pr_err("XAGA-STAGE crtc_enable: is_dual_pipe=%d ddp_mode=%d path_comp_nr=%d crtc_id=%d\n",
+	pr_err("RUBENS-STAGE crtc_enable: is_dual_pipe=%d ddp_mode=%d path_comp_nr=%d crtc_id=%d\n",
 	       mtk_crtc->is_dual_pipe ? 1 : 0, mtk_crtc->ddp_mode,
 	       mtk_crtc->ddp_ctx[mtk_crtc->ddp_mode].ddp_comp_nr[DDP_MAJOR],
 	       crtc_id);
-	xaga_dump_disp("crtc_enable_start");
+	mtk_dump_disp("crtc_enable_start");
 
 	/* attach the crtc to each componet */
 	mtk_crtc_attach_ddp_comp(crtc, mtk_crtc->ddp_mode, true);
@@ -6205,8 +6205,8 @@ void mtk_drm_crtc_enable(struct drm_crtc *crtc)
 	if (mtk_crtc->mml_cfg)
 		mtk_crtc_alloc_sram(mtk_crtc);
 
-	pr_err("XAGA-STAGE crtc_enable DONE (all 15 steps)\n");
-	xaga_dump_disp("crtc_enable_done");
+	pr_err("RUBENS-STAGE crtc_enable DONE (all 15 steps)\n");
+	mtk_dump_disp("crtc_enable_done");
 end:
 	CRTC_MMP_EVENT_END(crtc_id, enable,
 			mtk_crtc->enabled, 0);
@@ -6629,8 +6629,8 @@ void mtk_crtc_first_enable_ddp_config(struct mtk_drm_crtc *mtk_crtc)
 	cmdq_pkt_flush(cmdq_handle);
 	cmdq_pkt_destroy(cmdq_handle);
 
-	pr_err("XAGA-STAGE first_enable_ddp_config DONE (first_cfg flushed)\n");
-	xaga_dump_disp("after_first_config");
+	pr_err("RUBENS-STAGE first_enable_ddp_config DONE (first_cfg flushed)\n");
+	mtk_dump_disp("after_first_config");
 
 	if (mtk_crtc_is_frame_trigger_mode(&mtk_crtc->base))
 		mtk_crtc_set_dirty(mtk_crtc);
@@ -6675,7 +6675,7 @@ void mtk_drm_crtc_first_enable(struct drm_crtc *crtc)
 	/* 3. Regsister configuration */
 	mtk_crtc_first_enable_ddp_config(mtk_crtc);
 
-	pr_err("XAGA-STAGE crtc_first_enable: after first_enable_ddp_config\n");
+	pr_err("RUBENS-STAGE crtc_first_enable: after first_enable_ddp_config\n");
 
 	if (disp_helper_get_stage() == DISP_HELPER_STAGE_NORMAL) {
 		/* 4. power on mtcmos */
@@ -10207,24 +10207,25 @@ int mtk_drm_crtc_create(struct drm_device *drm_dev,
 		return -ENOMEM;
 
 	for (zpos = 0; zpos < mtk_crtc->layer_nr; zpos++) {
+		/*
+		 * No plane is registered as DRM_PLANE_TYPE_CURSOR on purpose.
+		 * The topmost OVL layer of this CRTC is what a compositor picks
+		 * as a hardware cursor, but on the DSI output here that layer
+		 * takes the framebuffer and never scans it out: KWin programs a
+		 * valid 64x64 ARGB cursor buffer and its position, and nothing
+		 * ever becomes visible.  Without a cursor plane compositors draw
+		 * the pointer into the primary plane instead, which works.
+		 */
 		type = (zpos == 0) ? DRM_PLANE_TYPE_PRIMARY
-				   : (zpos == (mtk_crtc->layer_nr - 1UL))
-					     ? DRM_PLANE_TYPE_CURSOR
-					     : DRM_PLANE_TYPE_OVERLAY;
+				   : DRM_PLANE_TYPE_OVERLAY;
 		ret = mtk_plane_init(drm_dev, &mtk_crtc->planes[zpos], zpos,
 				     BIT(pipe), type);
 		if (ret)
 			return ret;
 	}
 
-	if (mtk_crtc->layer_nr == 1UL) {
-		ret = mtk_drm_crtc_init(drm_dev, mtk_crtc,
-					&mtk_crtc->planes[0].base, NULL, pipe);
-	} else {
-		ret = mtk_drm_crtc_init(
-			drm_dev, mtk_crtc, &mtk_crtc->planes[0].base,
-			&mtk_crtc->planes[mtk_crtc->layer_nr - 1UL].base, pipe);
-	}
+	ret = mtk_drm_crtc_init(drm_dev, mtk_crtc, &mtk_crtc->planes[0].base,
+				NULL, pipe);
 	if (ret < 0)
 		return ret;
 
@@ -10306,7 +10307,7 @@ int mtk_drm_crtc_create(struct drm_device *drm_dev,
 					mtk_crtc, "ddp_cmdq_trig");
 	}
 
-	/* XAGA-HEAL: pipeline self-restart on cmdq timeout */
+	/* RUBENS-HEAL: pipeline self-restart on cmdq timeout */
 	atomic_set(&mtk_crtc->self_heal_busy, 0);
 	mtk_crtc->self_heal_ticks = 0;
 	INIT_WORK(&mtk_crtc->self_heal_work, mtk_crtc_cmdq_timeout_heal);

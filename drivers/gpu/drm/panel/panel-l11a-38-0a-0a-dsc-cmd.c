@@ -190,12 +190,10 @@ static int lcm_panel_vci_regulator_init(struct device *dev)
 	return ret; /* must be 0 */
 }
 
-static unsigned int vibr_start_up = 1;
 static int lcm_panel_vci_enable(struct device *dev)
 {
 	int ret = 0;
 	int retval = 0;
-	int status = 0;
 
 	pr_info("%s +\n",__func__);
 
@@ -205,16 +203,17 @@ static int lcm_panel_vci_enable(struct device *dev)
 		pr_err("set voltage disp_vci fail, ret = %d\n", ret);
 	retval |= ret;
 
-	status = regulator_is_enabled(disp_vci);
-	pr_info("%s regulator_is_enabled = %d, vibr_start_up = %d\n", __func__, status, vibr_start_up);
-	if(!status || vibr_start_up){
-		/* enable regulator */
-		ret = regulator_enable(disp_vci);
-		if (ret < 0)
-			pr_err("enable regulator disp_vci fail, ret = %d\n", ret);
-		vibr_start_up = 0;
-		retval |= ret;
-	}
+	/* Pair unconditionally with lcm_panel_vci_disable(): lcm_prepare() and
+	 * lcm_unprepare() are strictly paired via ctx->prepared, so each prepare
+	 * does exactly one enable and each unprepare one disable. Do NOT gate on
+	 * regulator_is_enabled(): on this board the rails can stay physically on
+	 * (held by another consumer), which previously made the enable path skip
+	 * re-enabling while the disable path kept firing, causing
+	 * "unbalanced disables". */
+	ret = regulator_enable(disp_vci);
+	if (ret < 0)
+		pr_err("enable regulator disp_vci fail, ret = %d\n", ret);
+	retval |= ret;
 
 	pr_info("%s -\n",__func__);
 	return retval;
@@ -224,17 +223,12 @@ static int lcm_panel_vci_disable(struct device *dev)
 {
 	int ret = 0;
 	int retval = 0;
-	int status = 0;
 
 	pr_info("%s +\n",__func__);
 
-	status = regulator_is_enabled(disp_vci);
-	pr_info("%s regulator_is_enabled = %d\n", __func__, status);
-	if(status){
-		ret = regulator_disable(disp_vci);
-		if (ret < 0)
-			pr_err("disable regulator disp_vci fail, ret = %d\n", ret);
-	}
+	ret = regulator_disable(disp_vci);
+	if (ret < 0)
+		pr_err("disable regulator disp_vci fail, ret = %d\n", ret);
 	retval |= ret;
 
 	pr_info("%s -\n",__func__);
@@ -262,12 +256,10 @@ static int lcm_panel_vddi_regulator_init(struct device *dev)
 	return ret; /* must be 0 */
 }
 
-static unsigned int vrf18_start_up = 1;
 static int lcm_panel_vddi_enable(struct device *dev)
 {
 	int ret = 0;
 	int retval = 0;
-	int status = 0;
 
 	pr_info("%s +\n",__func__);
 
@@ -277,16 +269,11 @@ static int lcm_panel_vddi_enable(struct device *dev)
 		pr_err("set voltage disp_vddi fail, ret = %d\n", ret);
 	retval |= ret;
 
-	status = regulator_is_enabled(disp_vddi);
-	pr_info("%s regulator_is_enabled = %d, vrf18_start_up = %d\n", __func__, status, vrf18_start_up);
-	if (!status || vrf18_start_up){
-		/* enable regulator */
-		ret = regulator_enable(disp_vddi);
-		if (ret < 0)
-			pr_err("enable regulator disp_vddi fail, ret = %d\n", ret);
-		vrf18_start_up = 0;
-		retval |= ret;
-	}
+	/* See lcm_panel_vci_enable(): paired, unconditional enable/disable. */
+	ret = regulator_enable(disp_vddi);
+	if (ret < 0)
+		pr_err("enable regulator disp_vddi fail, ret = %d\n", ret);
+	retval |= ret;
 
 	pr_info("%s -\n",__func__);
 	return retval;
@@ -296,19 +283,14 @@ static int lcm_panel_vddi_disable(struct device *dev)
 {
 	int ret = 0;
 	int retval = 0;
-	int status = 0;
 
 	pr_info("%s +\n",__func__);
 
-	status = regulator_is_enabled(disp_vddi);
-	pr_info("%s regulator_is_enabled = %d\n", __func__, status);
-	if (status){
-		ret = regulator_disable(disp_vddi);
-		if (ret < 0)
-			pr_err("disable regulator disp_vddi fail, ret = %d\n", ret);
-	}
-
+	ret = regulator_disable(disp_vddi);
+	if (ret < 0)
+		pr_err("disable regulator disp_vddi fail, ret = %d\n", ret);
 	retval |= ret;
+
 	pr_info("%s -\n",__func__);
 
 	return retval;
@@ -1377,6 +1359,22 @@ static void lcm_panel_init(struct drm_panel *panel)
 		default:
 			break;
 	}
+
+	/*
+	 * The init tables program display brightness (DCS 0x51) to 0x0000.
+	 * On this mainline port there is no mi_disp userspace HAL and no
+	 * backlight device registered, so after a panel re-init (resume /
+	 * screen-on) nothing re-applies the previous level and the panel
+	 * stays permanently black (only fixed by manually poking
+	 * /sys/kernel/debug/mtkfb "backlight:<n>"). Re-issue the last
+	 * remembered level (bl_tb0, default 1023) right after the init
+	 * sequence. This path only runs on a fresh panel init; at boot the
+	 * panel is already prepared and we return early above.
+	 */
+	lcm_dcs_write_seq(ctx, bl_tb0[0], bl_tb0[1], bl_tb0[2]);
+	pr_info("%s: restore brightness after panel init: 0x%02x%02x\n",
+		__func__, (unsigned char)bl_tb0[1], (unsigned char)bl_tb0[2]);
+
 	ctx->prepared = true;
 err:
 	pr_info("%s: -\n", __func__);

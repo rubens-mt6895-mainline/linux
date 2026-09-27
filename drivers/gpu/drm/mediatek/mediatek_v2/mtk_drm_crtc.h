@@ -751,7 +751,7 @@ struct mtk_drm_crtc {
 	wait_queue_head_t trigger_event;
 	wait_queue_head_t trigger_cmdq;
 
-	/* XAGA-HEAL: throttle-restart the pipeline when a cmdq timeout
+	/* MTK-HEAL: throttle-restart the pipeline when a cmdq timeout
 	 * leaves STREAM_EOF un-armed (see mtk_crtc_cmdq_timeout_cb). */
 	atomic_t self_heal_busy;
 	unsigned long self_heal_ticks;
