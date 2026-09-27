@@ -34,7 +34,7 @@
 #include <linux/scs.h>
 #include <linux/mm.h>
 #include <linux/io.h>
-#include <linux/xaga_marker.h>
+#include <linux/rubens_marker.h>
 
 #include <asm/acpi.h>
 #include <asm/fixmap.h>
@@ -59,27 +59,27 @@
 #include <asm/mmu_context.h>
 
 /*
- * XAGA boot-stage markers (legacy wrapper): the printk mirror now lives in
- * drivers/misc/xaga-marker-writer.c, armed at the head of setup_arch into the
+ * RUBENS boot-stage markers (legacy wrapper): the printk mirror now lives in
+ * drivers/misc/rubens-marker-writer.c, armed at the head of setup_arch into the
  * log_store region (0x7ffbf000), which LK's PL_LOG_STORE restores into the
  * expdb partition on the next boot. These wrappers keep the init/main.c stage
  * calls compiling; they just forward into the new ring writer.
  */
-void xaga_word_stage(u32 stage);
-void xaga_stage(int stage);
+void rubens_word_stage(u32 stage);
+void rubens_stage(int stage);
 
-void xaga_word_stage(u32 stage)
+void rubens_word_stage(u32 stage)
 {
-	xaga_marker_stage(stage);
+	rubens_marker_stage(stage);
 }
 
-void xaga_stage(int stage)
+void rubens_stage(int stage)
 {
-	xaga_marker_stage(stage);
+	rubens_marker_stage(stage);
 }
 
 /*
- * XAGA GPU MTCMOS bring-up hack.
+ * RUBENS GPU MTCMOS bring-up hack.
  *
  * LK leaves the MT6895 GPU TOP domain (MFG1) powered on, so panthor can read
  * GPU_ID/features, but the shader-core sub-domains MFG2..MFG12 are OFF ->
@@ -93,10 +93,10 @@ void xaga_stage(int stage)
  * PWR_CLK_DIS=BIT4, PWR_ISO=BIT1, PWR_RST_B=BIT0, SRAM_PDN=BIT8/ACK=BIT12,
  * status = bits 31:30 (domain ON when both set).
  */
-#define XAGA_SCPSYS_PA	0x1c001000UL
-#define XAGA_SCPSYS_SZ	0x1000
+#define MTK_SCPSYS_PA	0x1c001000UL
+#define MTK_SCPSYS_SZ	0x1000
 
-static int __init __maybe_unused xaga_gpu_power_on(void)
+static int __init __maybe_unused mtk_gpu_power_on(void)
 {
 	static const u32 mfg_offs[] = {
 		0xEBC, 0xEC0, 0xEC4, 0xEC8, 0xECC,
@@ -106,13 +106,13 @@ static int __init __maybe_unused xaga_gpu_power_on(void)
 	u32 sta = GENMASK(31, 30);
 	int i;
 
-	scpsys = ioremap(XAGA_SCPSYS_PA, XAGA_SCPSYS_SZ);
+	scpsys = ioremap(MTK_SCPSYS_PA, MTK_SCPSYS_SZ);
 	if (!scpsys) {
-		pr_err("XAGA-GPU: scpsys ioremap failed\n");
+		pr_err("MTK-GPU: scpsys ioremap failed\n");
 		return -ENOMEM;
 	}
 
-	pr_info("XAGA-GPU: PWR_STA@F34=%#x PWR_STA2@F38=%#x\n",
+	pr_info("MTK-GPU: PWR_STA@F34=%#x PWR_STA2@F38=%#x\n",
 		readl(scpsys + 0xF34), readl(scpsys + 0xF38));
 
 	/* MFG clock bring-up (correct regs, mt6895 clk-mt6895.c):
@@ -132,9 +132,9 @@ static int __init __maybe_unused xaga_gpu_power_on(void)
 		int p;
 
 		if (top && mfgpll && mfgsc) {
-			pr_info("XAGA-GPU: CLK_CFG30=%#x\n", readl(top + 0x1f0));
+			pr_info("MTK-GPU: CLK_CFG30=%#x\n", readl(top + 0x1f0));
 			for (p = 0; p < 2; p++) {
-				pr_info("XAGA-GPU: %s before CON0=%#x CON1=%#x CON3=%#x\n",
+				pr_info("MTK-GPU: %s before CON0=%#x CON1=%#x CON3=%#x\n",
 					names[p], readl(plls[p] + 0x008),
 					readl(plls[p] + 0x00C), readl(plls[p] + 0x014));
 				/* PWR on (CON3 bit0), ISO off (CON3 bit1) - mtk_pll_prepare */
@@ -148,27 +148,27 @@ static int __init __maybe_unused xaga_gpu_power_on(void)
 				v = readl(plls[p] + 0x00C);
 				writel(v & ~BIT(24), plls[p] + 0x00C);
 				udelay(200);
-				pr_info("XAGA-GPU: %s after  CON0=%#x CON1=%#x CON3=%#x\n",
+				pr_info("MTK-GPU: %s after  CON0=%#x CON1=%#x CON3=%#x\n",
 					names[p], readl(plls[p] + 0x008),
 					readl(plls[p] + 0x00C), readl(plls[p] + 0x014));
 			}
 			/* select mfgpll/mfgscpll on the mux (bit16/bit17) */
 			writel(BIT(16) | BIT(17), top + 0x1f8);	/* CLR */
 			writel(BIT(16) | BIT(17), top + 0x1f4);	/* SET */
-			pr_info("XAGA-GPU: CLK_CFG30 after=%#x\n", readl(top + 0x1f0));
+			pr_info("MTK-GPU: CLK_CFG30 after=%#x\n", readl(top + 0x1f0));
 
 			/* open mfgcfg BG3D gate (0x13fbf000: SET +0x4, CLR +0x8, STA +0x0) */
 			{
 				void __iomem *mfgcg = ioremap(0x13fbf000, 0x1000);
 				if (mfgcg) {
 					writel(BIT(0), mfgcg + 0x4);	/* gate on */
-					pr_info("XAGA-GPU: MFGCFG STA=%#x\n",
+					pr_info("MTK-GPU: MFGCFG STA=%#x\n",
 						readl(mfgcg + 0x0));
 					iounmap(mfgcg);
 				}
 			}
 		} else {
-			pr_err("XAGA-GPU: clk ioremap failed\n");
+			pr_err("MTK-GPU: clk ioremap failed\n");
 		}
 		if (top)
 			iounmap(top);
@@ -185,7 +185,7 @@ static int __init __maybe_unused xaga_gpu_power_on(void)
 
 		val = readl(ctl);
 		if ((val & sta) == sta) {
-			pr_info("XAGA-GPU: mfg%d already on (%#x)\n", i + 1, val);
+			pr_info("MTK-GPU: mfg%d already on (%#x)\n", i + 1, val);
 			continue;
 		}
 
@@ -195,7 +195,7 @@ static int __init __maybe_unused xaga_gpu_power_on(void)
 		tmo = 100000;
 		while (tmo-- && (readl(ctl) & BIT(12)))
 			udelay(1);
-		pr_info("XAGA-GPU: mfg%d after sram-rel reg=%#x sram_ack=%d\n",
+		pr_info("MTK-GPU: mfg%d after sram-rel reg=%#x sram_ack=%d\n",
 			i + 1, readl(ctl), !!(readl(ctl) & BIT(12)));
 
 		/* MTCMOS power-on */
@@ -209,7 +209,7 @@ static int __init __maybe_unused xaga_gpu_power_on(void)
 		while (tmo-- && (readl(ctl) & sta) != sta)
 			udelay(1);
 		if (tmo < 0) {
-			pr_err("XAGA-GPU: mfg%d PWR_CON timeout (reg=%#x) PWR_STA=%#x\n",
+			pr_err("MTK-GPU: mfg%d PWR_CON timeout (reg=%#x) PWR_STA=%#x\n",
 			       i + 1, readl(ctl), readl(scpsys + 0xF34));
 			continue;
 		}
@@ -223,11 +223,11 @@ static int __init __maybe_unused xaga_gpu_power_on(void)
 		val |= BIT(0);			/* PWR_RST_B */
 		writel(val, ctl);
 
-		pr_info("XAGA-GPU: mfg%d powered on (reg=%#x PWR_STA=%#x)\n",
+		pr_info("MTK-GPU: mfg%d powered on (reg=%#x PWR_STA=%#x)\n",
 			i + 1, readl(ctl), readl(scpsys + 0xF34));
 	}
 
-	pr_info("XAGA-GPU: done, PWR_STA=%#x\n", readl(scpsys + 0xF34));
+	pr_info("MTK-GPU: done, PWR_STA=%#x\n", readl(scpsys + 0xF34));
 	iounmap(scpsys);
 	return 0;
 }
@@ -239,10 +239,10 @@ static int __init __maybe_unused xaga_gpu_power_on(void)
  * GPU bring-up needs the proper mtk-scpsys + mt6895 clock driver ports (§13).
  * Keep the function above as reference; do not re-enable via blind pokes.
  */
-/* postcore_initcall(xaga_gpu_power_on); */
+/* postcore_initcall(mtk_gpu_power_on); */
 
 /*
- * XAGA i2c5 clock + pinmux enable.
+ * RUBENS i2c5 clock + pinmux enable.
  *
  * The MT6375 PMIC (charger/gauge/tcpc) lives on i2c5 (0x11280000). Its clocks
  * are fixed-clock stubs in the DTS (no mt6895 clock driver), so the clock
@@ -258,21 +258,21 @@ static int __init __maybe_unused xaga_gpu_power_on(void)
  *     RMW field; pins 32-39 live at gpio base 0x10005000 + 0x0340 + pin*0x10
  *     (GPIO33 -> 0x10005550, GPIO34 -> 0x10005560), bits 3:0.
  */
-#define XAGA_IMPC_PA	0x11282000UL
-#define XAGA_PERI_PA	0x11036000UL
-#define XAGA_TOP_PA	0x10000000UL
-#define XAGA_GPIO_PA	0x10005000UL
+#define MTK_IMPC_PA	0x11282000UL
+#define MTK_PERI_PA	0x11036000UL
+#define MTK_TOP_PA	0x10000000UL
+#define MTK_GPIO_PA	0x10005000UL
 
-static int __init xaga_i2c_power_on(void)
+static int __init mtk_i2c_power_on(void)
 {
-	void __iomem *impc = ioremap(XAGA_IMPC_PA, 0x1000);
-	void __iomem *peri = ioremap(XAGA_PERI_PA, 0x1000);
-	void __iomem *top = ioremap(XAGA_TOP_PA, 0x1000);
-	void __iomem *gpio = ioremap(XAGA_GPIO_PA, 0x1000);
+	void __iomem *impc = ioremap(MTK_IMPC_PA, 0x1000);
+	void __iomem *peri = ioremap(MTK_PERI_PA, 0x1000);
+	void __iomem *top = ioremap(MTK_TOP_PA, 0x1000);
+	void __iomem *gpio = ioremap(MTK_GPIO_PA, 0x1000);
 	u32 v;
 
 	if (impc) {
-		pr_info("XAGA-I2C: impc CG STA=%#x\n", readl(impc + 0xE00));
+		pr_info("MTK-I2C: impc CG STA=%#x\n", readl(impc + 0xE00));
 		/*
 		 * mtk_clk_gate_ops_setclr is INVERTED: enable = clear the bit
 		 * (mtk_cg_clr_bit -> CLR reg), disable = set the bit (SET reg),
@@ -282,24 +282,24 @@ static int __init xaga_i2c_power_on(void)
 		 * bit0 = i2c5, bit1 = i2c6 (both in imp_iic_wrap_c).
 		 */
 		writel(BIT(0) | BIT(1), impc + 0xE04);	/* CLR -> ENABLE i2c5/i2c6 */
-		pr_info("XAGA-I2C: impc CG STA after=%#x (want bit0/bit1=0 = enabled)\n",
+		pr_info("MTK-I2C: impc CG STA after=%#x (want bit0/bit1=0 = enabled)\n",
 			readl(impc + 0xE00));
 		iounmap(impc);
 	} else {
-		pr_err("XAGA-I2C: impc ioremap failed\n");
+		pr_err("MTK-I2C: impc ioremap failed\n");
 	}
 
 	/* i2c7 gate: imp_iic_wrap_s @0x11d07000, CLK_IMPS_AP_CLOCK_I2C7 = bit 4 */
 	{
 		void __iomem *imps = ioremap(0x11d07000, 0x1000);
 		if (imps) {
-			pr_info("XAGA-I2C: imps CG STA=%#x\n", readl(imps + 0xE00));
+			pr_info("MTK-I2C: imps CG STA=%#x\n", readl(imps + 0xE00));
 			writel(BIT(4), imps + 0xE04);	/* CLR -> ENABLE i2c7 */
-			pr_info("XAGA-I2C: imps CG STA after=%#x (want bit4=0)\n",
+			pr_info("MTK-I2C: imps CG STA after=%#x (want bit4=0)\n",
 				readl(imps + 0xE00));
 			iounmap(imps);
 		} else {
-			pr_err("XAGA-I2C: imps ioremap failed\n");
+			pr_err("MTK-I2C: imps ioremap failed\n");
 		}
 	}
 
@@ -307,14 +307,14 @@ static int __init xaga_i2c_power_on(void)
 	{
 		void __iomem *imps = ioremap(0x11d07000, 0x1000);
 		if (imps) {
-			pr_info("XAGA-I2C: i2c1 imps CG STA=%#x\n",
+			pr_info("MTK-I2C: i2c1 imps CG STA=%#x\n",
 				readl(imps + 0xE00));
 			writel(BIT(0), imps + 0xE04);	/* CLR -> ENABLE i2c1 */
-			pr_info("XAGA-I2C: i2c1 imps CG STA after=%#x (want bit0=0)\n",
+			pr_info("MTK-I2C: i2c1 imps CG STA after=%#x (want bit0=0)\n",
 				readl(imps + 0xE00));
 			iounmap(imps);
 		} else {
-			pr_err("XAGA-I2C: i2c1 imps ioremap failed\n");
+			pr_err("MTK-I2C: i2c1 imps ioremap failed\n");
 		}
 	}
 
@@ -330,39 +330,39 @@ static int __init xaga_i2c_power_on(void)
 	{
 		void __iomem *imps = ioremap(0x11d07000, 0x1000);
 		if (imps) {
-			pr_info("XAGA-I2C: cam imps CG STA before=%#x\n",
+			pr_info("MTK-I2C: cam imps CG STA before=%#x\n",
 				readl(imps + 0xE00));
 			writel(0xffffffff, imps + 0xE04);	/* CLR -> all enabled */
-			pr_info("XAGA-I2C: cam imps CG STA after=%#x (want 0)\n",
+			pr_info("MTK-I2C: cam imps CG STA after=%#x (want 0)\n",
 				readl(imps + 0xE00));
 			iounmap(imps);
 		} else {
-			pr_err("XAGA-I2C: cam imps ioremap failed\n");
+			pr_err("MTK-I2C: cam imps ioremap failed\n");
 		}
 	}
 
 	if (peri) {
 		v = readl(peri + 0x40);
-		pr_info("XAGA-I2C: peri DMA gate=%#x\n", v);
+		pr_info("MTK-I2C: peri DMA gate=%#x\n", v);
 		iounmap(peri);
 	} else {
-		pr_err("XAGA-I2C: peri ioremap failed\n");
+		pr_err("MTK-I2C: peri ioremap failed\n");
 	}
 
 	if (top) {
 		v = readl(top + 0xC0);
-		pr_info("XAGA-I2C: CLK_CFG_11=%#x i2c_sel=%u\n",
+		pr_info("MTK-I2C: CLK_CFG_11=%#x i2c_sel=%u\n",
 			v, (v >> 8) & 0x3);
 		if (((v >> 8) & 0x3) != 0) {
 			/* select parent 0 (tck_26m = 26MHz) + latch */
 			writel(0x300, top + 0xC8);	/* CLK_CFG_11_CLR */
 			writel(BIT(14), top + 0x08);	/* CLK_CFG_UPDATE1 */
-			pr_info("XAGA-I2C: CLK_CFG_11 after=%#x i2c_sel=%u\n",
+			pr_info("MTK-I2C: CLK_CFG_11 after=%#x i2c_sel=%u\n",
 				readl(top + 0xC0), (readl(top + 0xC0) >> 8) & 0x3);
 		}
 		iounmap(top);
 	} else {
-		pr_err("XAGA-I2C: topckgen ioremap failed\n");
+		pr_err("MTK-I2C: topckgen ioremap failed\n");
 	}
 
 	if (gpio) {
@@ -379,7 +379,7 @@ static int __init xaga_i2c_power_on(void)
 		writel((v & ~0xf0) | (1 << 4), gpio + 0x340);	/* GPIO33=SCL5 */
 		v = readl(gpio + 0x340);
 		writel((v & ~0xf00) | (1 << 8), gpio + 0x340);	/* GPIO34=SDA5 */
-		pr_info("XAGA-I2C: gpio33/34 mode reg=%#x (want bits7:4=1,bits11:8=1)\n",
+		pr_info("MTK-I2C: gpio33/34 mode reg=%#x (want bits7:4=1,bits11:8=1)\n",
 			readl(gpio + 0x340));
 		/*
 		 * i2c7: GPIO29=SCL7, GPIO30=SDA7, mode 1.
@@ -390,7 +390,7 @@ static int __init xaga_i2c_power_on(void)
 		writel((v & ~0x00f00000) | (1 << 20), gpio + 0x330);	/* GPIO29=SCL7 */
 		v = readl(gpio + 0x330);
 		writel((v & ~0x0f000000) | (1 << 24), gpio + 0x330);	/* GPIO30=SDA7 */
-		pr_info("XAGA-I2C: gpio29/30 mode reg=%#x\n", readl(gpio + 0x330));
+		pr_info("MTK-I2C: gpio29/30 mode reg=%#x\n", readl(gpio + 0x330));
 		/*
 		 * i2c1: GPIO8=SCL1, GPIO9=SDA1, mode 1.
 		 *   pins 8-15 -> s_addr 0x310; bits=(pin-8)*4
@@ -400,7 +400,7 @@ static int __init xaga_i2c_power_on(void)
 		writel((v & ~0x00f) | (1 << 0), gpio + 0x310);		/* GPIO8=SCL1 */
 		v = readl(gpio + 0x310);
 		writel((v & ~0x0f0) | (1 << 4), gpio + 0x310);		/* GPIO9=SDA1 */
-		pr_info("XAGA-I2C: gpio8/9 mode reg=%#x\n", readl(gpio + 0x310));
+		pr_info("MTK-I2C: gpio8/9 mode reg=%#x\n", readl(gpio + 0x310));
 		/*
 		 * i2c6: GPIO31=SCL6, GPIO32=SDA6, mode 1.
 		 *   pin 31: pins 24-31 -> s_addr 0x330, bits=(31-24)*4=28
@@ -410,7 +410,7 @@ static int __init xaga_i2c_power_on(void)
 		writel((v & ~(0xfUL << 28)) | (1UL << 28), gpio + 0x330); /* GPIO31=SCL6 */
 		v = readl(gpio + 0x340);
 		writel((v & ~0xfUL) | 1UL, gpio + 0x340);		/* GPIO32=SDA6 */
-		pr_info("XAGA-I2C: gpio31/32 mode reg=%#x/%#x\n",
+		pr_info("MTK-I2C: gpio31/32 mode reg=%#x/%#x\n",
 			readl(gpio + 0x330), readl(gpio + 0x340));
 		/*
 		 * Camera I2C pad muxes. From the i2c5/i2c7/i2c1/i2c6 cases above
@@ -444,11 +444,11 @@ static int __init xaga_i2c_power_on(void)
 				writel((v & ~(0xfUL << sh)) | (1UL << sh),
 				       gpio + off);
 			}
-			pr_info("XAGA-I2C: camera i2c pads muxed (%u pins)\n", n);
+			pr_info("MTK-I2C: camera i2c pads muxed (%u pins)\n", n);
 		}
 		iounmap(gpio);
 	} else {
-		pr_err("XAGA-I2C: gpio ioremap failed\n");
+		pr_err("MTK-I2C: gpio ioremap failed\n");
 	}
 
 	/*
@@ -464,7 +464,7 @@ static int __init xaga_i2c_power_on(void)
 			writel(v | BIT(2) | BIT(7), br + 0x90);		/* PU */
 			v = readl(br + 0x80);
 			writel(v & ~(BIT(2) | BIT(7)), br + 0x80);	/* PD off */
-			pr_info("XAGA-I2C: i2c7 pins IES=%#x PU=%#x PD=%#x\n",
+			pr_info("MTK-I2C: i2c7 pins IES=%#x PU=%#x PD=%#x\n",
 				readl(br + 0x70), readl(br + 0x90), readl(br + 0x80));
 			iounmap(br);
 		}
@@ -486,7 +486,7 @@ static int __init xaga_i2c_power_on(void)
 			writel(v | BIT(5) | BIT(9), lt + 0x90);		/* PU */
 			v = readl(lt + 0x70);
 			writel(v & ~(BIT(5) | BIT(9)), lt + 0x70);	/* PD off */
-			pr_info("XAGA-I2C: i2c6 pins IES=%#x SMT=%#x PU=%#x PD=%#x\n",
+			pr_info("MTK-I2C: i2c6 pins IES=%#x SMT=%#x PU=%#x PD=%#x\n",
 				readl(lt + 0x60), readl(lt + 0xe0),
 				readl(lt + 0x90), readl(lt + 0x70));
 			iounmap(lt);
@@ -518,7 +518,7 @@ static int __init xaga_i2c_power_on(void)
 			writel(v | BIT(19), iocfg + 0x30);	/* IES */
 			v = readl(iocfg + 0xb0);
 			writel(v | BIT(14), iocfg + 0xb0);	/* SMT */
-			pr_info("XAGA-I2C: pin33 PU=%#x PD=%#x IES=%#x SMT=%#x\n",
+			pr_info("MTK-I2C: pin33 PU=%#x PD=%#x IES=%#x SMT=%#x\n",
 				readl(iocfg + 0x60), readl(iocfg + 0x40),
 				readl(iocfg + 0x30), readl(iocfg + 0xb0));
 			iounmap(iocfg);
@@ -533,7 +533,7 @@ static int __init xaga_i2c_power_on(void)
 			writel(v | BIT(1), iocfg + 0x70);	/* IES */
 			v = readl(iocfg + 0x110);
 			writel(v | BIT(0), iocfg + 0x110);	/* SMT */
-			pr_info("XAGA-I2C: pin34 PU=%#x PD=%#x IES=%#x SMT=%#x\n",
+			pr_info("MTK-I2C: pin34 PU=%#x PD=%#x IES=%#x SMT=%#x\n",
 				readl(iocfg + 0xb0), readl(iocfg + 0x90),
 				readl(iocfg + 0x70), readl(iocfg + 0x110));
 			iounmap(iocfg);
@@ -557,7 +557,7 @@ static int __init xaga_i2c_power_on(void)
 			writel(v | BIT(18) | BIT(20), br + 0x90);	/* PU */
 			v = readl(br + 0x80);
 			writel(v & ~(BIT(18) | BIT(20)), br + 0x80);	/* PD off */
-			pr_info("XAGA-I2C: i2c1 pins IES=%#x SMT=%#x PU=%#x PD=%#x\n",
+			pr_info("MTK-I2C: i2c1 pins IES=%#x SMT=%#x PU=%#x PD=%#x\n",
 				readl(br + 0x70), readl(br + 0xd0),
 				readl(br + 0x90), readl(br + 0x80));
 			iounmap(br);
@@ -580,10 +580,10 @@ static int __init xaga_i2c_power_on(void)
 		void __iomem *peri = ioremap(0x11036000, 0x1000);
 		if (peri) {
 			v = readl(peri + 0x3c);
-			pr_info("XAGA-SPI: perao0=%#x spi2 gate=%u (want 0=enabled)\n",
+			pr_info("MTK-SPI: perao0=%#x spi2 gate=%u (want 0=enabled)\n",
 				v, (v >> 19) & 1);
 			writel(v & ~BIT(19), peri + 0x3c);
-			pr_info("XAGA-SPI: perao0 after=%#x\n", readl(peri + 0x3c));
+			pr_info("MTK-SPI: perao0 after=%#x\n", readl(peri + 0x3c));
 			iounmap(peri);
 		}
 	}
@@ -591,12 +591,12 @@ static int __init xaga_i2c_power_on(void)
 		void __iomem *top = ioremap(0x10000000, 0x1000);
 		if (top) {
 			v = readl(top + 0x80);
-			pr_info("XAGA-SPI: CLK_CFG_7=%#x spi_sel=%u (want 0=26M)\n",
+			pr_info("MTK-SPI: CLK_CFG_7=%#x spi_sel=%u (want 0=26M)\n",
 				v, (v >> 16) & 0x7);
 			writel(0x70000, top + 0x88);	/* CLR bits 16-18 */
 			writel(0, top + 0x84);		/* SET parent 0 */
 			writel(BIT(30), top + 0x04);	/* CLK_CFG_UPDATE latch */
-			pr_info("XAGA-SPI: CLK_CFG_7 after=%#x\n",
+			pr_info("MTK-SPI: CLK_CFG_7 after=%#x\n",
 				readl(top + 0x80));
 			iounmap(top);
 		}
@@ -611,17 +611,17 @@ static int __init xaga_i2c_power_on(void)
 			v = readl(gpio + 0x3d0);
 			writel((v & ~0xfff00000) | (1 << 20) | (1 << 24) | (1 << 28),
 			       gpio + 0x3d0);
-			pr_info("XAGA-SPI: gpio109-111 mode reg=%#x (want bits 23:20,27:24,31:28 = 1)\n",
+			pr_info("MTK-SPI: gpio109-111 mode reg=%#x (want bits 23:20,27:24,31:28 = 1)\n",
 				readl(gpio + 0x3d0));
 			/* GPIO112=CLK -> reg 0x3e0, bits 3:0 */
 			v = readl(gpio + 0x3e0);
 			writel((v & ~0xf) | 1, gpio + 0x3e0);
-			pr_info("XAGA-SPI: gpio112 mode reg=%#x (want bit0=1)\n",
+			pr_info("MTK-SPI: gpio112 mode reg=%#x (want bit0=1)\n",
 				readl(gpio + 0x3e0));
 			/* GPIO135=INT -> reg 0x400 bits 31:28 = 0 (GPIO) */
 			v = readl(gpio + 0x400);
 			writel(v & ~0xf0000000, gpio + 0x400);
-			pr_info("XAGA-SPI: gpio135 mode reg=%#x (want 0)\n",
+			pr_info("MTK-SPI: gpio135 mode reg=%#x (want 0)\n",
 				readl(gpio + 0x400));
 			iounmap(gpio);
 		}
@@ -645,7 +645,7 @@ static int __init xaga_i2c_power_on(void)
 			writel(v | pins, rm + 0x70);		/* PU */
 			v = readl(rm + 0x60);
 			writel(v & ~pins, rm + 0x60);		/* PD off */
-			pr_info("XAGA-SPI: spi2 pins IES=%#x SMT=%#x PU=%#x PD=%#x\n",
+			pr_info("MTK-SPI: spi2 pins IES=%#x SMT=%#x PU=%#x PD=%#x\n",
 				readl(rm + 0x50), readl(rm + 0xa0),
 				readl(rm + 0x70), readl(rm + 0x60));
 			iounmap(rm);
@@ -660,7 +660,7 @@ static int __init xaga_i2c_power_on(void)
 			writel(v | BIT(2), rm + 0x50);		/* PU */
 			v = readl(rm + 0x40);
 			writel(v & ~BIT(2), rm + 0x40);		/* PD off */
-			pr_info("XAGA-SPI: gpio135 IES=%#x SMT=%#x PU=%#x PD=%#x\n",
+			pr_info("MTK-SPI: gpio135 IES=%#x SMT=%#x PU=%#x PD=%#x\n",
 				readl(rm + 0x30), readl(rm + 0x80),
 				readl(rm + 0x50), readl(rm + 0x40));
 			iounmap(rm);
@@ -669,7 +669,7 @@ static int __init xaga_i2c_power_on(void)
 
 	return 0;
 }
-postcore_initcall(xaga_i2c_power_on);
+postcore_initcall(mtk_i2c_power_on);
 
 static int num_standard_resources;
 static struct resource *standard_resources;
@@ -905,10 +905,10 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
 	early_fixmap_init();
 	early_ioremap_init();
 
-	/* Earliest point the fixmap maps the xaga log_store ring (0x7ffbf000);
+	/* Earliest point the fixmap maps the rubens log_store ring (0x7ffbf000);
 	 * from here on every printk() is mirrored into it, and LK restores the
 	 * region into expdb on the next boot. */
-	xaga_marker_early_init();
+	rubens_marker_early_init();
 
 	setup_machine_fdt(__fdt_pointer);
 
