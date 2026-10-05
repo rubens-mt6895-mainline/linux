@@ -16595,6 +16595,7 @@ F:	drivers/media/platform/mediatek/isp/Kconfig
 F:	drivers/media/platform/mediatek/isp/Makefile
 F:	drivers/media/platform/mediatek/isp/isp71/Kconfig
 F:	drivers/media/platform/mediatek/isp/isp71/Makefile
+F:	drivers/media/platform/mediatek/isp/isp71/mtk_camsv71*
 F:	drivers/media/platform/mediatek/isp/isp71/mtk_seninf71*
 
 MEDIATEK MT6895 MIPI-CSI RX PHY DRIVER
