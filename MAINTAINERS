@@ -10764,6 +10764,7 @@ M:	Akisaira <akisaira@outlook.com>
 L:	linux-media@vger.kernel.org
 S:	Maintained
 F:	Documentation/devicetree/bindings/media/i2c/galaxycore,gc02m1.yaml
+F:	drivers/media/i2c/gc02m1.c
 
 GALAXYCORE GC0308 CAMERA SENSOR DRIVER
 M:	Sebastian Reichel <sre@kernel.org>
