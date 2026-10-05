@@ -25314,6 +25314,12 @@ S:	Maintained
 F:	Documentation/devicetree/bindings/media/i2c/sony,imx582.yaml
 F:	drivers/media/i2c/imx582.c
 
+SONY IMX596 SENSOR DRIVER
+M:	Akisaira <akisaira@outlook.com>
+L:	linux-media@vger.kernel.org
+S:	Maintained
+F:	Documentation/devicetree/bindings/media/i2c/sony,imx596.yaml
+
 SONY MEMORYSTICK SUBSYSTEM
 M:	Maxim Levitsky <maximlevitsky@gmail.com>
 M:	Alex Dubov <oakad@yahoo.com>
