@@ -16580,6 +16580,11 @@ F:	include/dt-bindings/reset/mediatek,mt6735-mfgcfg.h
 F:	include/dt-bindings/reset/mediatek,mt6735-pericfg.h
 F:	include/dt-bindings/reset/mediatek,mt6735-vdecsys.h
 
+MEDIATEK MT6895 CAMERA I2C CLOCK DRIVER
+M:	Akisaira <akisaira@outlook.com>
+S:	Maintained
+F:	drivers/clk/mediatek/clk-mt6895-i2c-camera.c
+
 MEDIATEK MT76 WIRELESS LAN DRIVER
 M:	Felix Fietkau <nbd@nbd.name>
 M:	Lorenzo Bianconi <lorenzo@kernel.org>
