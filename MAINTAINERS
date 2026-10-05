@@ -25319,6 +25319,7 @@ M:	Akisaira <akisaira@outlook.com>
 L:	linux-media@vger.kernel.org
 S:	Maintained
 F:	Documentation/devicetree/bindings/media/i2c/sony,imx596.yaml
+F:	drivers/media/i2c/imx596.c
 
 SONY MEMORYSTICK SUBSYSTEM
 M:	Maxim Levitsky <maximlevitsky@gmail.com>

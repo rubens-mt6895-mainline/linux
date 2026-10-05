@@ -309,6 +309,17 @@ config VIDEO_IMX582
 	  To compile this driver as a module, choose M here: the
 	  module will be called imx582.
 
+config VIDEO_IMX596
+	tristate "Sony IMX596 sensor support"
+	depends on PM
+	select V4L2_CCI_I2C
+	help
+	  This is a Video4Linux2 sensor driver for the Sony IMX596
+	  20 Mpixel camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called imx596.
+
 config VIDEO_MAX9271_LIB
 	tristate
 
