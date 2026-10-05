@@ -16585,6 +16585,12 @@ M:	Akisaira <akisaira@outlook.com>
 S:	Maintained
 F:	drivers/clk/mediatek/clk-mt6895-i2c-camera.c
 
+MEDIATEK MT6895 CAMERA SENINF AND CAMSV DRIVERS
+M:	Akisaira <akisaira@outlook.com>
+L:	linux-media@vger.kernel.org
+S:	Maintained
+F:	Documentation/devicetree/bindings/media/mediatek,mt6895-seninf.yaml
+
 MEDIATEK MT6895 MIPI-CSI RX PHY DRIVER
 M:	Akisaira <akisaira@outlook.com>
 L:	linux-media@vger.kernel.org
