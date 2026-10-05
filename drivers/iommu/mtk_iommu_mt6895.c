@@ -1603,6 +1603,19 @@ static int mtk_iommu_get_domain_id(struct device *dev,
 	return -EINVAL;
 }
 
+/*
+ * SKIP_CFG_PORT keeps the port setup that the inherited display LARBs get
+ * outside Linux. Linux configures the ports of the LARBs in cfg_port_larbs
+ * as mainline does: attach sets the MMU/bank mask that the SMI LARB programs
+ * on runtime resume, and probe links each client to its LARB.
+ */
+static bool mtk_iommu_cfg_port(const struct mtk_iommu_plat_data *plat_data,
+			       u32 fwid)
+{
+	return plat_data->iommu_type == MM_IOMMU &&
+	       (plat_data->cfg_port_larbs & BIT_ULL(MTK_M4U_TO_LARB(fwid)));
+}
+
 static void mtk_iommu_config(struct mtk_iommu_data *data, struct device *dev,
 			     bool enable, unsigned int domid)
 {
@@ -1612,8 +1625,10 @@ static void mtk_iommu_config(struct mtk_iommu_data *data, struct device *dev,
 	const struct mtk_iommu_iova_region *region;
 	int i;
 
+	/* probe_device() keeps all ports of a cfg_port client on one LARB. */
 	if (data->plat_data->iommu_type != MM_IOMMU ||
-	    MTK_IOMMU_HAS_FLAG(data->plat_data, SKIP_CFG_PORT)) {
+	    (MTK_IOMMU_HAS_FLAG(data->plat_data, SKIP_CFG_PORT) &&
+	     !mtk_iommu_cfg_port(data->plat_data, fwspec->ids[0]))) {
 		pr_info("XAGA-DOWN IOMMU config dev=%s enable=%d SKIP_CFG_PORT=%d type=%d ids[0]=0x%x larb=%d port=%d dom=%d\n",
 			dev_name(dev), enable,
 			MTK_IOMMU_HAS_FLAG(data->plat_data, SKIP_CFG_PORT),
@@ -1962,17 +1977,73 @@ return pa;
 
 static struct iommu_device *mtk_iommu_probe_device(struct device *dev)
 {
-struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
-struct mtk_iommu_data *data;
+	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
+	struct mtk_iommu_data *data;
+	struct device_link *link;
+	struct device *larbdev;
+	unsigned int larbid, i;
+	bool cfg_port = false, one_larb = true;
 
-if (!fwspec)
-return ERR_PTR(-ENODEV);
+	if (!fwspec)
+		return ERR_PTR(-ENODEV);
 
-data = dev_iommu_priv_get(dev);
-if (!data)
-return ERR_PTR(-ENODEV);
+	data = dev_iommu_priv_get(dev);
+	if (!data)
+		return ERR_PTR(-ENODEV);
 
-return &data->iommu;
+	larbid = MTK_M4U_TO_LARB(fwspec->ids[0]);
+	for (i = 0; i < fwspec->num_ids; i++) {
+		if (mtk_iommu_cfg_port(data->plat_data, fwspec->ids[i]))
+			cfg_port = true;
+		if (MTK_M4U_TO_LARB(fwspec->ids[i]) != larbid)
+			one_larb = false;
+	}
+	if (!cfg_port)
+		return &data->iommu;
+
+	/*
+	 * As in mainline, all ports of a client are on one LARB, and the client
+	 * is linked to it for runtime PM. Reject a client only with -ENODEV:
+	 * the bus scan of iommu_device_register() skips such a device, while
+	 * any other error unregisters the whole IOMMU, for DISP the display.
+	 */
+	if (!one_larb) {
+		dev_err(dev, "ports of a larb%u client span several LARBs\n",
+			larbid);
+		return ERR_PTR(-ENODEV);
+	}
+	larbdev = data->larb_imu[larbid].dev;
+	if (!larbdev) {
+		dev_err(dev, "larb%u is not managed by %s\n", larbid,
+			dev_name(data->dev));
+		return ERR_PTR(-ENODEV);
+	}
+	link = device_link_add(dev, larbdev,
+			       DL_FLAG_PM_RUNTIME | DL_FLAG_STATELESS);
+	if (!link) {
+		dev_err(dev, "Unable to link %s\n", dev_name(larbdev));
+		return ERR_PTR(-ENODEV);
+	}
+	return &data->iommu;
+}
+
+static void mtk_iommu_release_device(struct device *dev)
+{
+	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
+	struct mtk_iommu_data *data = dev_iommu_priv_get(dev);
+	int tab_id;
+
+	if (!fwspec || !data ||
+	    !mtk_iommu_cfg_port(data->plat_data, fwspec->ids[0]))
+		return;
+
+	/* There is no detach callback: clear the ports that attach set. */
+	tab_id = MTK_M4U_TO_TAB(fwspec->ids[0]);
+	mutex_lock(&init_mutexs[tab_id]);
+	mtk_iommu_config(data, dev, false, 0);
+	mutex_unlock(&init_mutexs[tab_id]);
+	device_link_remove(dev,
+			   data->larb_imu[MTK_M4U_TO_LARB(fwspec->ids[0])].dev);
 }
 
 static struct iommu_group *mtk_iommu_device_group(struct device *dev)
@@ -2066,6 +2137,7 @@ list_add_tail(&region->list, head);
 static const struct iommu_ops mtk_iommu_ops = {
 .domain_alloc_paging = mtk_iommu_domain_alloc_paging,
 .probe_device= mtk_iommu_probe_device,
+.release_device = mtk_iommu_release_device,
 .device_group= mtk_iommu_device_group,
 .of_xlate= mtk_iommu_of_xlate,
 .get_resv_regions = mtk_iommu_get_resv_regions,
@@ -3498,6 +3570,8 @@ static const struct mtk_iommu_plat_data mt6895_data_disp = {
 	.iova_region    = mt6895_multi_dom_mm,
 	.iova_region_nr = ARRAY_SIZE(mt6895_multi_dom_mm),
 	.mau_count	= 4,
+	/* Camera LARB13 (CAM_MAIN); display LARBs keep SKIP_CFG_PORT. */
+	.cfg_port_larbs	= BIT_ULL(13),
 	/* not use larbid_remap */
 };
 
