@@ -20201,6 +20201,11 @@ S:	Supported
 W:	http://www.onsemi.com
 F:	drivers/net/phy/ncn*
 
+ONSEMI FAN53870 CAMERA PMIC DRIVER
+M:	Akisaira <akisaira@outlook.com>
+S:	Maintained
+F:	Documentation/devicetree/bindings/regulator/onnn,fan53870.yaml
+
 OP-TEE DRIVER
 M:	Jens Wiklander <jenswi@kernel.org>
 L:	op-tee@lists.trustedfirmware.org (moderated for non-subscribers)
