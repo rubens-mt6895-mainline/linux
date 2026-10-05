@@ -20205,6 +20205,7 @@ ONSEMI FAN53870 CAMERA PMIC DRIVER
 M:	Akisaira <akisaira@outlook.com>
 S:	Maintained
 F:	Documentation/devicetree/bindings/regulator/onnn,fan53870.yaml
+F:	drivers/regulator/fan53870.c
 
 OP-TEE DRIVER
 M:	Jens Wiklander <jenswi@kernel.org>
