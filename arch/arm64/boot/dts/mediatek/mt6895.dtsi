@@ -227,6 +227,17 @@
 	};
 
 	/*
+	 * Parent, by name, of the topckgen osc_* and ulposc_ck factors. Stock
+	 * MT6895 /clocks/ulposc is a 260 MHz fixed clock (osc_d10 = 26 MHz).
+	 */
+	clk_ulposc: clock-ulposc {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <260000000>;
+		clock-output-names = "ulposc";
+	};
+
+	/*
 	 * i2c5 clock stubs. The real sources are i2c_sel (topckgen CLK_CFG_11
 	 * bits 8-9, default parent tck_26m = 26MHz) -> i2c_ck, gated by
 	 * imp_iic_wrap_c (bit0), and the apdma gate in pericfg_ao (bit5).
