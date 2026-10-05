@@ -16590,6 +16590,7 @@ M:	Akisaira <akisaira@outlook.com>
 L:	linux-media@vger.kernel.org
 S:	Maintained
 F:	Documentation/devicetree/bindings/phy/mediatek,mt6895-csi-rx.yaml
+F:	drivers/phy/mediatek/phy-mtk-mipi-csi-3-0*
 
 MEDIATEK MT76 WIRELESS LAN DRIVER
 M:	Felix Fietkau <nbd@nbd.name>
