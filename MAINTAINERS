@@ -16591,6 +16591,11 @@ L:	linux-media@vger.kernel.org
 S:	Maintained
 F:	Documentation/devicetree/bindings/media/mediatek,mt6895-camsv.yaml
 F:	Documentation/devicetree/bindings/media/mediatek,mt6895-seninf.yaml
+F:	drivers/media/platform/mediatek/isp/Kconfig
+F:	drivers/media/platform/mediatek/isp/Makefile
+F:	drivers/media/platform/mediatek/isp/isp71/Kconfig
+F:	drivers/media/platform/mediatek/isp/isp71/Makefile
+F:	drivers/media/platform/mediatek/isp/isp71/mtk_seninf71*
 
 MEDIATEK MT6895 MIPI-CSI RX PHY DRIVER
 M:	Akisaira <akisaira@outlook.com>
