@@ -2907,14 +2907,14 @@ skip_smi:
 
 	ret = iommu_device_register(&data->iommu, &mtk_iommu_ops, dev);
 	if (ret)
-		goto out_list_del;
+		goto out_sysfs_remove;
 
 	if (data->plat_data->iommu_type == MM_IOMMU &&
 	    !MTK_IOMMU_HAS_FLAG(data->plat_data, IOMMU_EN_PRE)) {
 		ret = component_master_add_with_match(dev, &mtk_iommu_com_ops,
 						      match);
 		if (ret)
-			goto out_list_del;
+			goto out_iommu_unregister;
 	}
 
 	/* register the notifier for power domain just for mm_iommu */
@@ -2951,13 +2951,15 @@ skip_smi:
 	return ret;
 
 
-out_list_del:
-	list_del(&data->list);
+out_iommu_unregister:
 	iommu_device_unregister(&data->iommu);
 out_sysfs_remove:
+	/* A failed iommu_device_register() has already unregistered itself. */
 	iommu_device_sysfs_remove(&data->iommu);
-out_link_remove:
-	device_link_remove(data->smicomm_dev, dev);
+out_list_del:
+	list_del(&data->list);
+	if (data->smicomm_dev)
+		device_link_remove(data->smicomm_dev, dev);
 out_runtime_disable:
 	pm_runtime_disable(dev);
 	return ret;
