@@ -24141,6 +24141,7 @@ M:	Akisaira <akisaira@outlook.com>
 L:	linux-media@vger.kernel.org
 S:	Maintained
 F:	Documentation/devicetree/bindings/media/i2c/samsung,s5k4h7.yaml
+F:	drivers/media/i2c/s5k4h7.c
 
 SAMSUNG S5K5BAF CAMERA DRIVER
 M:	Sylwester Nawrocki <s.nawrocki@samsung.com>
