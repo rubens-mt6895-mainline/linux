@@ -1322,6 +1322,71 @@
 		};
 
 		/*
+		 * Camera buses use independent wrapper gates; shared clocks remain
+		 * under the existing setup.c/fixed-clock handoff until all I2C
+		 * consumers can be migrated together.
+		 */
+		imp_iic_wrap_s: clock-controller@11d07000 {
+			compatible = "mediatek,mt6895-imp_iic_wrap_s";
+			reg = <0x11d07000 0x1000>;
+			#clock-cells = <1>;
+			clocks = <&clk_i2c5_main>;
+			status = "disabled";
+		};
+
+		i2c2: i2c@11d01000 {
+			compatible = "mediatek,mt6895-i2c";
+			reg = <0x11d01000 0x1000>, <0x11300180 0x100>;
+			interrupts = <GIC_SPI 146 IRQ_TYPE_LEVEL_HIGH 0>;
+			clocks = <&imp_iic_wrap_s CLK_IMPS_AP_CLOCK_I2C2>,
+				 <&clk_i2c_dma>;
+			clock-names = "main", "dma";
+			clock-div = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		i2c4: i2c@11d03000 {
+			compatible = "mediatek,mt6895-i2c";
+			reg = <0x11d03000 0x1000>, <0x11300300 0x100>;
+			interrupts = <GIC_SPI 148 IRQ_TYPE_LEVEL_HIGH 0>;
+			clocks = <&imp_iic_wrap_s CLK_IMPS_AP_CLOCK_I2C4>,
+				 <&clk_i2c_dma>;
+			clock-names = "main", "dma";
+			clock-div = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		i2c8: i2c@11d05000 {
+			compatible = "mediatek,mt6895-i2c";
+			reg = <0x11d05000 0x1000>, <0x11300600 0x100>;
+			interrupts = <GIC_SPI 152 IRQ_TYPE_LEVEL_HIGH 0>;
+			clocks = <&imp_iic_wrap_s CLK_IMPS_AP_CLOCK_I2C8>,
+				 <&clk_i2c_dma>;
+			clock-names = "main", "dma";
+			clock-div = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		i2c9: i2c@11d06000 {
+			compatible = "mediatek,mt6895-i2c";
+			reg = <0x11d06000 0x1000>, <0x11300700 0x100>;
+			interrupts = <GIC_SPI 153 IRQ_TYPE_LEVEL_HIGH 0>;
+			clocks = <&imp_iic_wrap_s CLK_IMPS_AP_CLOCK_I2C9>,
+				 <&clk_i2c_dma>;
+			clock-names = "main", "dma";
+			clock-div = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		/*
 		 * i2c7 (I2C wrap S). Hosts the TI bq28z610 fuel gauge (capacity),
 		 * the LN8000 fast-charge pumps and sc8561. GPIO29=SCL7,
 		 * GPIO30=SDA7 are muxed/powered in setup.c.
