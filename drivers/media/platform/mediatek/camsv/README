@@ -1,24 +1,45 @@
 CAMSV capture driver for MT6895 (Redmi K50 / rubens)
 ===================================================
 
-cam_cap.c is a self-contained CAMSV1 capture driver for the IMX582 rear camera
-on the MT6895 (Redmi K50, codename rubens).
+cam_cap.c is a self-contained CAMSV capture driver for the camera sensors of
+the MT6895 (Redmi K50, codename rubens).
 
 Capture path
 ------------
 
-  IMX582 -> CSI-2 port 2 -> SENINF intf 4 -> SENINF mux 1 -> CAM_MUX 3
+  sensor -> CSI-2 port N -> SENINF intf 2N -> SENINF mux 1 -> CAM_MUX 3
          -> camsv1@1a110000 IMGO DMA -> V4L2 /dev/video0 (YUYV 422)
 
-The driver owns the sensor I2C bus (bus 10, address 0x10) for runtime exposure,
-gain and open-loop DW9800V focus writes, programs SENINF / CAM_MUX / CAMSV,
-allocates the capture buffer with dma_alloc_coherent() from CMA and maps it
-through the display IOMMU.  Raw frames rotate through a three-slot capture
-pipeline, so the arm thread does not wait for the converter to release the
-previous slot; conversion itself runs on a worker pool whose threads are niced
-so the pool cannot starve the rest of the system.  A per-frame governor on the
-conversion thread drives AE and AWB; /proc/camcap exposes statistics and
-commands.
+The default configuration captures the IMX582 rear camera (CSI port 2, SENINF
+intf 4).  The port is a runtime parameter, so the same driver serves the other
+sensors of this board as well:
+
+  sensor    CSI port   SENINF intf   D-PHY_TOP      output
+  IMX582    2          4             0x11c86000     4000x3000 / 2000x1500
+  IMX596    0          0             0x11c82000     2592x1952   (front)
+  S5K4H7    1          2             0x11c92000     3264x2448   (ultrawide)
+  GC02M1    3          6             0x11c96000     1600x1200   (macro)
+
+All of them are routed through CAM_MUX 3 into the single CAMSV instance this
+driver owns, so one sensor can stream at a time.  Physical CSI port N maps to
+SENINF interface 2N (only whole ports are supported by the SoC); the receiver
+window is selected with dphy_base and the sensor with route_intf, route_mux,
+cammux, i2c_bus and i2c_addr.
+
+  insmod cam_cap.ko v4l2_enable=1 route_intf=0 dphy_base=0x11c82000 \
+          exp_hsize=2592 exp_vsize=1952 out_width=2592 out_height=1952 \
+          i2c_bus=8 i2c_addr=0x10
+
+The driver owns that sensor's I2C bus for runtime exposure, gain and open-loop
+DW9800V focus writes, programs SENINF / CAM_MUX / CAMSV, allocates the capture
+buffer with dma_alloc_coherent() from CMA and maps it through the display
+IOMMU.  Raw frames rotate through a three-slot capture pipeline, so the arm
+thread does not wait for the converter to release the previous slot; conversion
+itself runs on a worker pool whose threads are niced so the pool cannot starve
+the rest of the system.  Each worker invalidates the cache lines of its own row
+band (sync_parallel, default on) instead of having the converter thread
+invalidate the whole frame first.  A per-frame governor on the conversion
+thread drives AE and AWB; /proc/camcap exposes statistics and commands.
 
 Sensor modes
 ------------
@@ -44,7 +65,9 @@ CSI receiver retimed.  The driver recomputes D-PHY HS_TRAIL and CSI2 DMY_CYCLE,
 the two fields of the receiver setup that follow the rate (rx_rate=1).
 
 The boot-time power-up sequence and the initial mode come from the bring-up
-scripts in the companion repository.
+scripts in the companion repository; sensors whose controller is not present in
+the board device tree (the macro camera sits on i2c@11d03000) additionally need
+the runtime overlay that repository ships.
 
 Enable and load
 ---------------
@@ -56,12 +79,14 @@ Enable and load
 conv_threads defaults to 8 (the workers are niced to 10 and the pool only runs
 while a frame is converted), pipe_slots selects the capture pipeline depth
 (2..4, default 3; three measured fastest).  The converter is compiled with -O3
-for the same reason.
+for the same reason.  sync_parallel (default 1) switches between the per-band
+and the whole-frame cache maintenance.
 
 Useful parameters: v4l2_bin (1 = full size output, 2 = 2x2 binned),
 v4l2_full_cache, exp_hsize/exp_vsize/v4l2_src_stride, exp_max, out_width/
-out_height, rb_swap, pipeline, pipe_slots, conv_threads, ae_enable/awb_enable/
-af_enable, dphy_base, rx_rate, mode_trace, mode_init_replay.  See the module's
+out_height, rb_swap, pipeline, pipe_slots, conv_threads, sync_parallel,
+route_intf/route_mux/cammux/dphy_base/seninf_base, i2c_bus/i2c_addr, rx_rate,
+mode_trace, mode_init_replay, ae_enable/awb_enable/af_enable.  See the module's
 MODULE_PARM_DESC strings.
 
 Reproducible builds
@@ -83,4 +108,12 @@ Notes, mode tables and bring-up scripts
   https://github.com/rubens-mt6895-mainline/k50-camera
 
 The sensor register tables the init sequence is based on come from the vendor
-kernel (MiCode/Xiaomi_Kernel_OpenSource, rubens-s-oss branch).
+kernel (MiCode/Xiaomi_Kernel_OpenSource, rubens-s-oss branch) for the IMX582 and
+from the GC02M1 / IMX596 / S5K4H7 driver series under review in the upstream
+repository for the other three sensors.  The four-camera bring-up and the
+measurements are documented in docs/V4L2_CAMERA.md in the companion repository.
+
+Design credit for the multi-sensor port mapping and the CSI receiver bring-up
+goes to the PR that added the other three sensor drivers; the SENINF interface
+numbering (physical port N -> interface 2N, TOP_PHY_CTRL_CSI) follows the
+mtk_seninf71 driver in that series.

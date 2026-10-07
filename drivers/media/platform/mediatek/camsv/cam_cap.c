@@ -305,7 +305,7 @@
 #define CAMCAP_DPHY_HS_TRAIL_EN		BIT(29)
 #define CAMCAP_DPHY_CLK_LANE0		0x10u
 #define CAMCAP_DPHY_CLK_LANE1		0x14u
-#define CAMCAP_CSI2_OFF			0x4a00u	/* CSI2 regs inside SENINF TOP */
+#define CAMCAP_CSI2_OFF			0x4a00u	/* CSI2 regs for intf 4; use SENINF_CSI2_BASE(intf) */
 #define CAMCAP_CSI2_RESYNC		0x0010u	/* DMY_CYCLE b27:16 */
 #define CAMCAP_CSI2_DMY_CYCLE		GENMASK(27, 16)
 #define CAMCAP_SENINF_CK		273000000U	/* vendor SENINF_CK */
@@ -313,7 +313,14 @@
 
 /* TOP words - mtk_cam-seninf-top-ctrl.h.  Byte j of word i holds mux 4i+j. */
 #define SENINF_TOP_MUX_CTRL(i)		(0x0010u + 4u * (i))
-#define SENINF_TOP_PHY_CTRL_CSI2	0x0048u	/* DPHY_EN b0, CPHY_EN b1, CPHY_MODE b9:8 */
+/*
+ * TOP_PHY_CTRL_CSI(p) = 0x0040 + 4 * p, where p is the physical CSI port
+ * (p = route_intf / 2).  CSI port 2 (route_intf 4) lands on 0x0048, the only
+ * value this driver knew before the other ports were needed.
+ * DPHY_EN b0, CPHY_EN b1, CPHY_MODE b9:8.
+ */
+#define SENINF_TOP_PHY_CTRL_CSI(p)	(0x0040u + 4u * (p))
+#define SENINF_TOP_PHY_CTRL_CSI2	SENINF_TOP_PHY_CTRL_CSI(2)
 
 /* Per-SENINF-mux block: 0x0d00 + 0x1000*j, j = MUX NUMBER - seninf1-mux.h */
 #define SENINF_MUX_BASE(j)		(0x0d00u + 0x1000u * (j))
@@ -725,6 +732,23 @@ module_param(pipe_slots, uint, 0644);
 MODULE_PARM_DESC(pipe_slots,
 		 "raw frame buffers in the capture pipeline, 2 to 4 (default 3)");
 
+/*
+ * Where the raw buffer's cache maintenance happens.
+ *
+ * The sensor writes through the DMA/IOMMU path, so before the CPU may read a
+ * fresh frame the cacheable alias of those pages has to be invalidated.  With
+ * the parallel pool that used to be one 18 MB invalidate on the converter
+ * thread before the workers were woken, which is serial time the frame period
+ * pays for.  With sync_parallel each worker invalidates only its own row band
+ * (the bands overlap by one row, so every row is still covered).  Set to 0 to
+ * get the old single-invalidate behaviour back for measurement; the info file
+ * reports both as sync= in the timing and avg lines.
+ */
+static bool sync_parallel = true;
+module_param(sync_parallel, bool, 0644);
+MODULE_PARM_DESC(sync_parallel,
+		 "parallel conversion: each worker invalidates its own row band (default 1; 0 = invalidate the whole frame on the converter thread)");
+
 /* Output geometry.  Must be CAMCAP_SRC_{WIDTH,HEIGHT} / CAMCAP_BIN. */
 static unsigned int out_width = 2000;
 module_param(out_width, uint, 0644);
@@ -1073,6 +1097,8 @@ static unsigned int cam_ae_mean_s;	/* smoothed green mean, 0 = no sample */
  */
 static void cam_raw_stats(struct cam_stats *st);
 static void cam_lut_rebuild(void);
+static void cam_band_sync(dma_addr_t phys, size_t size, unsigned int first,
+			  unsigned int last);
 static int cam_mode_match(unsigned int w, unsigned int h, unsigned int bin,
 			  unsigned int fps_x100);
 static int cam_mode_program(int idx);
@@ -1430,10 +1456,11 @@ static int cam_route(void)
 	else
 		pr_info("route: S0_DI_CTRL=%#010x (VC%u / DT %#x)\n", r,
 			route_vc, route_dt);
-	r = sen_rd(SENINF_TOP_PHY_CTRL_CSI2);
+	r = sen_rd(SENINF_TOP_PHY_CTRL_CSI(route_intf / 2));
 	if (!(r & 0x1)) {
-		sen_wr(SENINF_TOP_PHY_CTRL_CSI2, r | 0x1);	/* DPHY_EN */
-		pr_info("route: TOP_PHY_CTRL_CSI2 %#010x had DPHY_EN clear, set it\n", r);
+		sen_wr(SENINF_TOP_PHY_CTRL_CSI(route_intf / 2), r | 0x1);	/* DPHY_EN */
+		pr_info("route: TOP_PHY_CTRL_CSI%u %#010x had DPHY_EN clear, set it\n",
+			route_intf / 2, r);
 	}
 	r = sen_rd(ctrl + 0x10);
 	if (!(r & 0x1))
@@ -2395,6 +2422,13 @@ struct cam_conv_worker {
 	unsigned int		seen;
 	unsigned int		y0, y1;
 	struct cam_stats	st;		/* this worker's share of the sums */
+	/*
+	 * Row scratch, allocated once when the pool starts.  The fast
+	 * converter wants three unpacked rows (3 * (cam_src_w + 2) u16);
+	 * allocating that per band per frame showed up as allocator churn.
+	 */
+	u16			*scratch;
+	u64			sync_ns;	/* this band's cache invalidate */
 };
 
 #define CAMCAP_MAX_CONV	8
@@ -2456,6 +2490,15 @@ struct cam_v4l2_ctx {
 	unsigned int		job_gen;	/* bumped once per frame */
 	const u8		*job_src;
 	u8			*job_dst;
+	/*
+	 * Raw buffer behind job_src, so a worker can invalidate just its own
+	 * band instead of the converter thread invalidating all 18 MB first.
+	 * See sync_parallel and cam_band_sync().
+	 */
+	dma_addr_t		job_phys;
+	size_t			job_size;
+	bool			job_band_sync;	/* workers own the invalidate */
+	u64			job_sync_max;	/* slowest band, for the info file */
 	wait_queue_head_t	conv_wq;
 	struct completion	conv_done;
 
@@ -2475,10 +2518,10 @@ struct cam_v4l2_ctx {
 	u32			per_hist[4];
 
 	/* per-frame timings in ns (last frame) and a frame counter */
-	u64			t_arm, t_conv, t_gov, t_wait, t_total, t_period;
+	u64			t_arm, t_conv, t_gov, t_sync, t_wait, t_total, t_period;
 	unsigned int		t_frames;
 	/* running sums over the current stream, for a trustworthy fps figure */
-	u64			s_arm, s_conv, s_gov, s_period;
+	u64			s_arm, s_conv, s_gov, s_sync, s_period;
 	unsigned int		s_n;
 
 	/* controls */
@@ -2529,9 +2572,10 @@ static void cam_v4l2_info_timing(char *info, int *ip, size_t size)
 		       vc->nconv ? vc->conv[vc->nconv - 1].y1 : out_height,
 		       vc->job_gen);
 	i += scnprintf(info + i, size - i,
-		       "timing       : period=%lluus arm=%lluus conv=%lluus gov=%lluus idle=%lluus fps=%u.%02u frames=%u\n",
+		       "timing       : period=%lluus arm=%lluus conv=%lluus sync=%lluus gov=%lluus idle=%lluus fps=%u.%02u frames=%u\n",
 		       div_u64(per, 1000), div_u64(vc->t_arm, 1000),
-		       div_u64(vc->t_conv, 1000), div_u64(vc->t_gov, 1000),
+		       div_u64(vc->t_conv, 1000), div_u64(vc->t_sync, 1000),
+		       div_u64(vc->t_gov, 1000),
 		       div_u64(vc->t_wait, 1000),
 		       fps100 / 100, fps100 % 100, vc->t_frames);
 	if (vc->s_n) {
@@ -2540,9 +2584,10 @@ static void cam_v4l2_info_timing(char *info, int *ip, size_t size)
 		u32 afps = av ? (u32)div_u64(100000000000ULL, av) : 0;
 
 		i += scnprintf(info + i, size - i,
-			       "avg          : period=%lluus arm=%lluus conv=%lluus gov=%lluus fps=%u.%02u frames=%llu pipe=%u\n",
+			       "avg          : period=%lluus arm=%lluus conv=%lluus sync=%lluus gov=%lluus fps=%u.%02u frames=%llu pipe=%u\n",
 			       div_u64(av, 1000), div_u64(vc->s_arm, n * 1000),
 			       div_u64(vc->s_conv, n * 1000),
+			       div_u64(vc->s_sync, n * 1000),
 			       div_u64(vc->s_gov, n * 1000),
 			       afps / 100, afps % 100, n, vc->pipe_frames);
 		i += scnprintf(info + i, size - i,
@@ -4230,7 +4275,7 @@ static inline void cam_unpack_row_pad(const u8 *line, u16 *out, unsigned int n)
  */
 static void cam_v4l2_convert_full_fast(const u8 *src, u8 *dst,
 				       unsigned int first, unsigned int last,
-				       struct cam_stats *acc)
+				       u16 *scratch, struct cam_stats *acc)
 {
 	const unsigned int W = out_width;
 	const unsigned int H = out_height;
@@ -4239,7 +4284,8 @@ static void cam_v4l2_convert_full_fast(const u8 *src, u8 *dst,
 	const unsigned int rw = cam_src_w;
 	const unsigned int rh = cam_src_h;
 	int sat = cam_clamp_int(out_saturation, 0, 255);
-	u16 *rows, *lm, *l0, *lp, *tmp;
+	u16 *rows = scratch, *lm, *l0, *lp, *tmp;
+	bool owned = false;
 	unsigned int y, x;
 	u64 sum_r = 0, sum_g = 0, sum_b = 0;
 	unsigned int count = 0, clip = 0, dark = 0;
@@ -4249,10 +4295,19 @@ static void cam_v4l2_convert_full_fast(const u8 *src, u8 *dst,
 	const u8 *lut_ee = rb_swap ? cam_lut_b : cam_lut_r;	/* (0,0) tap */
 	const u8 *lut_oo = rb_swap ? cam_lut_r : cam_lut_b;	/* (1,1) tap */
 
-	rows = kmalloc_array(3 * (size_t)(rw + 2), sizeof(u16), GFP_KERNEL);
+	/*
+	 * The row window normally comes from the worker (allocated once per
+	 * stream); the other callers pass NULL and get a temporary one, so an
+	 * allocation failure still just falls back to the reference path.
+	 */
 	if (!rows) {
-		cam_v4l2_convert_full_ref(src, dst, first, last, acc);
-		return;
+		rows = kmalloc_array(3 * (size_t)(rw + 2), sizeof(u16),
+				     GFP_KERNEL);
+		if (!rows) {
+			cam_v4l2_convert_full_ref(src, dst, first, last, acc);
+			return;
+		}
+		owned = true;
 	}
 
 	lm = rows;
@@ -4265,13 +4320,18 @@ static void cam_v4l2_convert_full_fast(const u8 *src, u8 *dst,
 		u8 *o = dst + (size_t)(H - 1 - y) * W * 2;
 		bool st_on = !((y >> 1) & (CAMCAP_STATS_ROW_STEP - 1));
 		unsigned int nx = y + 1 < rh ? y + 1 : y;
+		/*
+		 * The output is rotated 180 degrees, so the row is written from
+		 * the last column group backwards: one decrementing pointer
+		 * instead of a multiply per group.
+		 */
+		u8 *q = o + (size_t)(n - 1) * 4;
 
 		cam_unpack_row_pad(src + (size_t)nx * stride, lp, rw);
 
-		for (x = 0; x + 1 < W; x += 2) {
+		for (x = 0; x + 1 < W; x += 2, q -= 4) {
 			unsigned int xp = x + 2;
 			u32 r0, g0, b0, r1, g1, b1;
-			u8 *q = o + (size_t)(n - 1 - (x >> 1)) * 4;
 
 			/* columns sit at index x+1 (see cam_unpack_row_pad) */
 			if (!(y & 1)) {
@@ -4344,7 +4404,8 @@ static void cam_v4l2_convert_full_fast(const u8 *src, u8 *dst,
 		lp = tmp;
 	}
 
-	kfree(rows);
+	if (owned)
+		kfree(rows);
 
 	acc->sum_r += sum_r;
 	acc->sum_g += sum_g;
@@ -4364,14 +4425,16 @@ static void cam_v4l2_convert_full_fast(const u8 *src, u8 *dst,
 }
 
 static void cam_v4l2_convert_band(const u8 *src, u8 *dst, unsigned int first,
-				  unsigned int last, struct cam_stats *acc)
+				  unsigned int last, u16 *scratch,
+				  struct cam_stats *acc)
 {
 	unsigned int W = out_width, H = out_height;
 	unsigned int n = W / 2;		/* 4-byte YUYV groups per row */
 
 	if (cam_bin == 1) {
 		if (v4l2_full_cache)
-			cam_v4l2_convert_full_fast(src, dst, first, last, acc);
+			cam_v4l2_convert_full_fast(src, dst, first, last,
+						   scratch, acc);
 		else
 			cam_v4l2_convert_full_ref(src, dst, first, last, acc);
 		return;
@@ -4589,7 +4652,15 @@ static int cam_conv_thread(void *arg)
 			break;
 		w->seen = READ_ONCE(c->job_gen);
 		cam_stats_reset(&w->st);
-		cam_v4l2_convert_band(c->job_src, c->job_dst, w->y0, w->y1, &w->st);
+		w->sync_ns = 0;
+		if (READ_ONCE(c->job_band_sync)) {
+			ktime_t ts = ktime_get();
+
+			cam_band_sync(c->job_phys, c->job_size, w->y0, w->y1);
+			w->sync_ns = ktime_to_ns(ktime_sub(ktime_get(), ts));
+		}
+		cam_v4l2_convert_band(c->job_src, c->job_dst, w->y0, w->y1,
+				      w->scratch, &w->st);
 		complete(&c->conv_done);
 	}
 	return 0;
@@ -4607,6 +4678,8 @@ static void cam_conv_pool_stop(struct cam_v4l2_ctx *c)
 			kthread_stop(c->conv[i].task);
 			c->conv[i].task = NULL;
 		}
+		kfree(c->conv[i].scratch);
+		c->conv[i].scratch = NULL;
 	}
 	c->nconv = 0;
 }
@@ -4640,6 +4713,17 @@ static void cam_conv_pool_start(struct cam_v4l2_ctx *c)
 		/* contiguous, equal-sized row bands: the work is uniform */
 		w->y0 = out_height * i / want;
 		w->y1 = out_height * (i + 1) / want;
+		/*
+		 * Row scratch, once per stream instead of once per band per
+		 * frame: the fast converter wants three unpacked rows.
+		 */
+		w->scratch = kmalloc_array(3 * ((size_t)cam_src_w + 2),
+					   sizeof(u16), GFP_KERNEL);
+		if (!w->scratch) {
+			pr_warn("convert: worker %u could not get its row scratch, falling back to inline\n",
+				i);
+			break;
+		}
 		w->task = kthread_run(cam_conv_thread, w, "cam_conv/%u", i);
 		if (IS_ERR(w->task)) {
 			pr_warn("convert: worker %u failed (%ld), falling back to inline\n",
@@ -4661,7 +4745,11 @@ static void cam_conv_pool_start(struct cam_v4l2_ctx *c)
 		for (j = 0; j < i; j++) {
 			kthread_stop(c->conv[j].task);
 			c->conv[j].task = NULL;
+			kfree(c->conv[j].scratch);
+			c->conv[j].scratch = NULL;
 		}
+		kfree(c->conv[i].scratch);
+		c->conv[i].scratch = NULL;
 		c->nconv = 0;
 		return;
 	}
@@ -4684,10 +4772,11 @@ static u64 cam_convert_frame(struct cam_v4l2_ctx *c, const u8 *src, u8 *dst,
 
 	if (!c->nconv) {
 		cam_stats_reset(out);
-		cam_v4l2_convert_band(src, dst, 0, out_height, out);
+		cam_v4l2_convert_band(src, dst, 0, out_height, NULL, out);
 	} else {
 		c->job_src = src;
 		c->job_dst = dst;
+		c->job_sync_max = 0;
 		reinit_completion(&c->conv_done);
 		WRITE_ONCE(c->job_gen, c->job_gen + 1);
 		wake_up_all(&c->conv_wq);
@@ -4707,15 +4796,28 @@ static u64 cam_convert_frame(struct cam_v4l2_ctx *c, const u8 *src, u8 *dst,
 			if (wait_for_completion_timeout(&c->conv_done, 2 * HZ))
 				continue;
 			pr_warn_once("convert: worker stalled, finishing frame inline\n");
+			/*
+			 * Nobody invalidated the bands for this frame, because
+			 * the workers own that when job_band_sync is set.
+			 */
+			if (READ_ONCE(c->job_band_sync) && cam_dma_dev &&
+			    c->job_phys && c->job_size)
+				dma_sync_single_for_cpu(cam_dma_dev,
+							c->job_phys,
+							c->job_size,
+							DMA_FROM_DEVICE);
 			cam_stats_reset(out);
-			cam_v4l2_convert_band(src, dst, 0, out_height, out);
+			cam_v4l2_convert_band(src, dst, 0, out_height, NULL, out);
 			inline_done = true;
 			break;
 		}
 		if (!inline_done) {
 			cam_stats_reset(out);
-			for (i = 0; i < c->nconv; i++)
+			for (i = 0; i < c->nconv; i++) {
 				cam_stats_merge(out, &c->conv[i].st);
+				if (c->conv[i].sync_ns > c->job_sync_max)
+					c->job_sync_max = c->conv[i].sync_ns;
+			}
 		}
 	}
 	cam_stats_finish(out);
@@ -4786,6 +4888,9 @@ static int cam_v4l2_grab(struct cam_v4l2_buf *buf)
 	if (c) {
 		struct cam_stats st;
 
+		/* cam_raw_sync() above already invalidated the whole buffer */
+		c->job_band_sync = false;
+		c->t_sync = 0;
 		c->t_conv = cam_convert_frame(c, cam_raw_src(), dst, &st);
 		t1 = ktime_get();
 		cam_isp_governor(&st);
@@ -4795,12 +4900,15 @@ static int cam_v4l2_grab(struct cam_v4l2_buf *buf)
 		c->s_arm += c->t_arm;
 		c->s_conv += c->t_conv;
 		c->s_gov += c->t_gov;
+		c->s_sync += c->t_sync;
 		c->s_n++;
 	} else {
 		struct cam_stats st;
 
 		cam_stats_reset(&st);
-		cam_v4l2_convert_band(cam_raw_src(), dst, 0, out_height, &st);
+		/* this path invalidates the whole buffer below; not job_band_sync */
+		c->job_band_sync = false;
+		cam_v4l2_convert_band(cam_raw_src(), dst, 0, out_height, NULL, &st);
 		cam_stats_finish(&st);
 		cam_isp_governor(&st);
 	}
@@ -4822,6 +4930,40 @@ static void cam_slot_sync(struct cam_slot *s)
 		return;
 	dma_sync_single_for_cpu(cam_dma_dev, (dma_addr_t)s->phys, s->size,
 				DMA_FROM_DEVICE);
+}
+
+/*
+ * The same maintenance for one worker's row band.
+ *
+ * cam_slot_sync() covers the whole frame and runs on the converter thread
+ * before any worker starts, so every frame pays for 18 MB of invalidation
+ * before the conversion even begins.  A worker only reads raw rows
+ * first - 1 .. last (the bilinear taps reach one row up and down), so it can
+ * invalidate just that.  The bands are not disjoint -- they overlap by that
+ * one row -- but invalidation only drops clean lines, so covering a shared row
+ * twice is harmless.  Offsets are clamped to the slot, and the caller keeps a
+ * full cam_slot_sync() for the paths that are not the parallel pool.
+ */
+static void cam_band_sync(dma_addr_t phys, size_t size, unsigned int first,
+			  unsigned int last)
+{
+	unsigned int stride = cam_src_stride;
+	unsigned int lo, hi;
+	size_t off, len;
+
+	if (!cam_dma_dev || !phys || !size || !stride)
+		return;
+	lo = first ? first - 1 : 0;
+	hi = last + 1 < cam_src_h ? last + 1 : cam_src_h;
+	if (hi <= lo)
+		return;
+	off = (size_t)lo * stride;
+	len = (size_t)(hi - lo) * stride;
+	if (off >= size)
+		return;
+	if (off + len > size)
+		len = size - off;
+	dma_sync_single_for_cpu(cam_dma_dev, phys + off, len, DMA_FROM_DEVICE);
 }
 
 /*
@@ -5060,9 +5202,22 @@ static void cam_v4l2_finish_slot(struct cam_v4l2_ctx *c, struct cam_slot *s)
 
 	/*
 	 * Whatever the CPU still holds for this slot's lines is from the
-	 * previous frame: drop it before reading the new one.
+	 * previous frame: drop it before reading the new one.  With the
+	 * parallel pool each worker invalidates only its own row band instead
+	 * (see cam_band_sync), which takes that work off the frame period: the
+	 * full invalidate used to run here, on the converter thread, before any
+	 * worker started.
 	 */
-	cam_slot_sync(s);
+	c->job_phys = s->phys;
+	c->job_size = s->size;
+	c->job_band_sync = c->nconv >= 2 && sync_parallel && s->phys && s->size;
+	c->t_sync = 0;
+	if (!c->job_band_sync) {
+		ktime_t ts = ktime_get();
+
+		cam_slot_sync(s);
+		c->t_sync = ktime_to_ns(ktime_sub(ktime_get(), ts));
+	}
 
 	dst = vb2_plane_vaddr(&buf->vb.vb2_buf, 0);
 	if (!dst) {
@@ -5075,6 +5230,8 @@ static void cam_v4l2_finish_slot(struct cam_v4l2_ctx *c, struct cam_slot *s)
 		cam_lut_rebuild();
 
 	c->t_conv = cam_convert_frame(c, s->va, dst, &st);
+	if (c->job_band_sync)
+		c->t_sync = c->job_sync_max;
 	/*
 	 * Every read of this slot is finished, so hand it back before doing
 	 * anything else: the AE/AWB update and the vb2 hand-off below do not
@@ -5091,6 +5248,7 @@ static void cam_v4l2_finish_slot(struct cam_v4l2_ctx *c, struct cam_slot *s)
 	c->s_arm += c->t_arm;
 	c->s_conv += c->t_conv;
 	c->s_gov += c->t_gov;
+	c->s_sync += c->t_sync;
 	c->s_n++;
 	c->pipe_frames++;
 
@@ -5178,7 +5336,12 @@ static void cam_v4l2_return_all(struct cam_v4l2_ctx *c, enum vb2_buffer_state st
 static int cam_v4l2_thread(void *arg)
 {
 	struct cam_v4l2_ctx *c = arg;
-	ktime_t t_prev = ktime_get();
+	/*
+	 * Zero until the first frame has been armed: the interval that ends at
+	 * the first completion covers the whole startup, so counting it would
+	 * report an fps far below the steady state.
+	 */
+	ktime_t t_prev = 0;
 
 	while (!kthread_should_stop()) {
 		struct cam_v4l2_buf *buf = NULL;
@@ -5239,10 +5402,14 @@ static int cam_v4l2_thread(void *arg)
 
 			/* interval between two consecutive frames: this is the fps */
 			t_now = ktime_get();
-			c->t_period = ktime_to_ns(ktime_sub(t_now, t_prev));
+			if (t_prev) {
+				c->t_period = ktime_to_ns(ktime_sub(t_now, t_prev));
+				c->s_period += c->t_period;
+				cam_per_hist_add(c, c->t_period);
+			} else {
+				c->t_period = 0;	/* startup, not a frame gap */
+			}
 			t_prev = t_now;
-			c->s_period += c->t_period;
-			cam_per_hist_add(c, c->t_period);
 
 			if (cam_v4l2_arm_slot(c, s, buf)) {
 				vb2_buffer_done(&buf->vb.vb2_buf,
@@ -5259,10 +5426,14 @@ static int cam_v4l2_thread(void *arg)
 
 		/* interval between two consecutive frames: this is the fps */
 		t_now = ktime_get();
-		c->t_period = ktime_to_ns(ktime_sub(t_now, t_prev));
+		if (t_prev) {
+			c->t_period = ktime_to_ns(ktime_sub(t_now, t_prev));
+			c->s_period += c->t_period;
+			cam_per_hist_add(c, c->t_period);
+		} else {
+			c->t_period = 0;	/* startup, not a frame gap */
+		}
 		t_prev = t_now;
-		c->s_period += c->t_period;
-		cam_per_hist_add(c, c->t_period);
 
 		if (cam_v4l2_grab(buf) == 0) {
 			buf->vb.vb2_buf.timestamp = ktime_get_ns();
@@ -5352,7 +5523,7 @@ static int cam_vb2_start_streaming(struct vb2_queue *q, unsigned int count)
 	c->t_frames = 0;
 	c->t_period = 0;
 	c->s_n = 0;
-	c->s_arm = c->s_conv = c->s_gov = c->s_period = 0;
+	c->s_arm = c->s_conv = c->s_gov = c->s_sync = c->s_period = 0;
 	memset(c->per_hist, 0, sizeof(c->per_hist));
 	cam_conv_pool_start(c);
 
@@ -5592,9 +5763,9 @@ static void cam_rx_set_rate(unsigned int mbps, bool force)
 		writel(v, cam_dphy + CAMCAP_DPHY_DATA_LANE(i));
 	}
 
-	v = readl(cam_seninf + CAMCAP_CSI2_OFF + CAMCAP_CSI2_RESYNC);
+	v = readl(cam_seninf + SENINF_CSI2_BASE(route_intf) + CAMCAP_CSI2_RESYNC);
 	v = (v & ~CAMCAP_CSI2_DMY_CYCLE) | ((cycles & 0xfff) << 16);
-	writel(v, cam_seninf + CAMCAP_CSI2_OFF + CAMCAP_CSI2_RESYNC);
+	writel(v, cam_seninf + SENINF_CSI2_BASE(route_intf) + CAMCAP_CSI2_RESYNC);
 
 	cam_rx_mbps = mbps;
 	pr_info("rx: %u Mbps/lane, DMY_CYCLE %u, HS_TRAIL %u\n",
