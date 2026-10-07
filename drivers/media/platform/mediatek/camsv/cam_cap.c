@@ -1,10 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/*
- * CAMSV1 capture driver for the MT6895 camera path (Redmi K50, rubens).
- *
- * Added to the tree by the k50-camera bring-up work; the full notes, mode
- * tables and helpers live in https://github.com/rubens-mt6895-mainline/k50-camera
- */
+// SPDX-License-Identifier: GPL-2.0
 /*
  * cam_cap.c - self-contained CAMSV1 single-frame capture module for the
  *             MediaTek MT6895 (Redmi K50 "rubens").
@@ -89,6 +83,7 @@
 #include <media/v4l2-ctrls.h>
 #include <media/videobuf2-v4l2.h>
 #include <media/videobuf2-vmalloc.h>
+#include "imx582_modes.h"	/* generated: mode tables, scripts/gen_modes_header.py */
 
 /* ------------------------------------------------------------------ */
 /* Defaults / tunables                                                */
@@ -295,6 +290,27 @@
 #define CAMCAP_SENINF_BASE_DEF	0x1a010000UL
 #define CAMCAP_SENINF_SIZE	0x20000UL
 
+/*
+ * D-PHY_TOP of the CSI port 2 block.  The receiver's timing follows the
+ * sensor's link rate: HS_TRAIL_PARAMETER in the D-PHY and DMY_CYCLE in the
+ * CSI2 block are both derived from the MIPI data rate, so a mode switch that
+ * changes the rate has to rewrite them.  Everything else about the receiver is
+ * rate-independent and stays as the userspace bring-up (scripts/port2_rx71.py,
+ * a port of isp71_ref's mtk_cam_seninf_set_csi_mipi()) programmed it.
+ */
+#define CAMCAP_DPHY_BASE_DEF	0x11c86000UL
+#define CAMCAP_DPHY_SIZE	0x1000UL
+#define CAMCAP_DPHY_DATA_LANE(i)	(0x20u + 4u * (i))	/* 0x20/0x24/0x28/0x2c */
+#define CAMCAP_DPHY_HS_TRAIL		GENMASK(15, 8)
+#define CAMCAP_DPHY_HS_TRAIL_EN		BIT(29)
+#define CAMCAP_DPHY_CLK_LANE0		0x10u
+#define CAMCAP_DPHY_CLK_LANE1		0x14u
+#define CAMCAP_CSI2_OFF			0x4a00u	/* CSI2 regs inside SENINF TOP */
+#define CAMCAP_CSI2_RESYNC		0x0010u	/* DMY_CYCLE b27:16 */
+#define CAMCAP_CSI2_DMY_CYCLE		GENMASK(27, 16)
+#define CAMCAP_SENINF_CK		273000000U	/* vendor SENINF_CK */
+#define CAMCAP_DPHY_TRAIL_DT		68	/* vendor csi_param.dphy_trail */
+
 /* TOP words - mtk_cam-seninf-top-ctrl.h.  Byte j of word i holds mux 4i+j. */
 #define SENINF_TOP_MUX_CTRL(i)		(0x0010u + 4u * (i))
 #define SENINF_TOP_PHY_CTRL_CSI2	0x0048u	/* DPHY_EN b0, CPHY_EN b1, CPHY_MODE b9:8 */
@@ -334,6 +350,48 @@
 static unsigned long seninf_base = CAMCAP_SENINF_BASE_DEF;
 module_param(seninf_base, ulong, 0444);
 MODULE_PARM_DESC(seninf_base, "physical base of SENINF TOP (default 0x1a010000)");
+
+/* Physical base of the CSI D-PHY_TOP block (receiver timing). */
+static unsigned long dphy_base = CAMCAP_DPHY_BASE_DEF;
+module_param(dphy_base, ulong, 0444);
+MODULE_PARM_DESC(dphy_base, "physical base of the CSI D-PHY_TOP (default 0x11c86000)");
+
+/*
+ * A mode switch can change the sensor's MIPI data rate (0x030e/0x030f):
+ * 4000x2256@60 and 1080p240 run at 1964 Mbps per lane where every other mode
+ * runs at 1370.  The D-PHY settle/trail and the CSI2 resynchronisation cycle
+ * have to follow it or the receiver sees no packets at all.
+ */
+static bool rx_rate = true;
+module_param(rx_rate, bool, 0644);
+MODULE_PARM_DESC(rx_rate,
+		 "retime the CSI receiver when a mode switch changes the MIPI data rate (default 1)");
+
+/*
+ * The power-on table is the vendor's INIT sequence, written once after the
+ * hardware reset.  The vendor's own mode switch does not replay it: it writes
+ * the mode table alone.  The bring-up scripts happen to replay both (they only
+ * ever do it right after a reset), so this switch exists to A/B the two flows
+ * on the device.
+ */
+static bool mode_init_replay = true;
+module_param(mode_init_replay, bool, 0644);
+MODULE_PARM_DESC(mode_init_replay,
+		 "replay the power-on register table when switching sensor modes (default 1)");
+
+/*
+ * Mode register tables are byte registers, not 16-bit ones: the vendor lists
+ * 0x0306 and 0x0307 as two separate pairs, so one write is a 3-byte transfer
+ * (register address plus a single data byte).  Writing them with the 16-bit
+ * helper sends a leading zero data byte instead, which the sensor
+ * auto-increments into the next register - every value lands one register too
+ * far and the mode registers end up reading back as zero.  mode_trace logs
+ * each replay write and reads the key registers back afterwards.
+ */
+static bool mode_trace;
+module_param(mode_trace, bool, 0644);
+MODULE_PARM_DESC(mode_trace,
+		 "log every write of a sensor mode table and verify the result (default 0)");
 
 /* Master switch for the routing that 'arm' performs before it kicks CAMSV. */
 static bool route_en = true;
@@ -866,7 +924,8 @@ MODULE_PARM_DESC(dgain_max, "largest digital gain the AE loop will ask for (defa
 /* ------------------------------------------------------------------ */
 
 static void __iomem *cam_base;		/* CAMSV register block */
-static void __iomem *cam_seninf;	/* SENINF TOP block (routing) */
+static void __iomem *cam_seninf;	/* SENINF TOP block (routing, CSI2) */
+static void __iomem *cam_dphy;		/* CSI D-PHY_TOP (receiver timing) */
 static bool cam_mem_region_ok;		/* true: request_mem_region() succeeded */
 
 static void *cam_frame;			/* CPU address of the capture buffer */
@@ -943,6 +1002,15 @@ static struct cam_sensor_state cam_sensor_hw;	/* last written to the sensor */
 /* the /proc diagnostic commands below need this before its definition */
 static void cam_sensor_apply(void);
 
+/*
+ * Selected sensor mode (see the "sensor modes" section further down): an index
+ * into cam_imx582_modes[] from the generated header, or -1 while the run-time
+ * geometry comes from the exp_hsize/exp_vsize/v4l2_bin parameters alone.
+ */
+static int cam_mode_idx = -1;
+static unsigned int cam_mode_fps;	/* fps_x100 of the selected mode */
+static unsigned int cam_rx_mbps;	/* MIPI rate the receiver is timed for */
+
 static struct i2c_adapter *cam_i2c_adap;	/* NULL until first use */
 
 /* grey-world white balance, Q8; the LUTs are built from these */
@@ -988,6 +1056,10 @@ static unsigned int cam_ae_mean_s;	/* smoothed green mean, 0 = no sample */
  */
 static void cam_raw_stats(struct cam_stats *st);
 static void cam_lut_rebuild(void);
+static int cam_mode_match(unsigned int w, unsigned int h, unsigned int bin,
+			  unsigned int fps_x100);
+static int cam_mode_program(int idx);
+static int cam_mode_select(const char *name, unsigned int bin);
 static unsigned int cam_lut_ver;
 static const char *cam_ae_state(void);
 static int cam_af_cmd(const char *line);
@@ -1881,6 +1953,40 @@ static ssize_t camcap_write(struct file *file, const char __user *ubuf,
 	} else if (str_has_prefix(line, "af") &&
 		   (line[2] == '\0' || line[2] == ' ')) {
 		ret = cam_af_cmd(line);
+	} else if (str_has_prefix(line, "mode") &&
+		   (line[4] == '\0' || line[4] == ' ')) {
+		/*
+		 * "mode <name> [bin]" switches the sensor table the same way
+		 * VIDIOC_S_FMT does, which is how a mode is brought up before
+		 * a stream starts and how the scripts check one.
+		 */
+		char name[16];
+		unsigned int bin = 0;
+
+		/*
+		 * sscanf() returns the number of converted fields: 2 when the
+		 * binning factor is there, 1 when it is not.  Testing for == 1
+		 * rejected every "mode <name> <bin>" spelling.
+		 */
+		if (sscanf(line + 4, "%15s %u", name, &bin) >= 1)
+			ret = cam_mode_select(name, bin);
+		else
+			ret = -EINVAL;
+	} else if (!strcmp(line, "modes")) {
+		unsigned int i;
+
+		pr_info("modes: %u tables in imx582_modes.h\n",
+			(unsigned int)CAMCAP_IMX582_NMODES);
+		for (i = 0; i < CAMCAP_IMX582_NMODES; i++) {
+			const struct cam_sensor_mode *m = &cam_imx582_modes[i];
+
+			pr_info("mode%u: %-12s %ux%u, HTS %u VTS %u, %u.%02u fps, exp_max %u%s\n",
+				i, m->name, m->hsize, m->vsize, m->hts, m->vts,
+				m->fps_x100 / 100, m->fps_x100 % 100,
+				m->exp_max,
+				(int)i == cam_mode_idx ? "  <- active" : "");
+		}
+		ret = 0;
 	} else if (!strcmp(line, "stats")) {
 		/*
 		 * Measure the frame sitting in the capture buffer and report it
@@ -1899,7 +2005,7 @@ static ssize_t camcap_write(struct file *file, const char __user *ubuf,
 		cam_stats_reads++;
 		ret = 0;
 	} else {
-		pr_err("unknown command '%s' (expected: cfg | route | reroute | arm | probe | burst | stop | regs | stats | af)\n",
+		pr_err("unknown command '%s' (expected: cfg | route | reroute | arm | probe | burst | stop | regs | stats | af | modes | mode)\n",
 		       line);
 		ret = -EINVAL;
 	}
@@ -2716,6 +2822,55 @@ static int cam_sensor_write16(unsigned int reg, unsigned int val)
 	if (ret < 0)
 		return ret;
 	return ret == 1 ? 0 : -EIO;
+}
+
+/*
+ * Byte-register write: register address plus exactly one data byte.  The mode
+ * tables are full of byte registers (0x0306, 0x0307, 0x0340, 0x0341), and a
+ * two-byte payload is auto-incremented into the following register instead.
+ * scripts/imx582_bring.py writes them the same way.
+ */
+static int cam_sensor_write8(unsigned int reg, unsigned int val)
+{
+	u8 buf[3] = { reg >> 8, reg & 0xff, val & 0xff };
+	struct i2c_msg msg = {
+		.addr = i2c_addr,
+		.flags = 0,
+		.len = sizeof(buf),
+		.buf = buf,
+	};
+	int ret;
+
+	if (!cam_i2c_adap)
+		return -ENODEV;
+
+	ret = i2c_transfer(cam_i2c_adap, &msg, 1);
+	if (ret < 0)
+		return ret;
+	return ret == 1 ? 0 : -EIO;
+}
+
+/* Read one byte register back (two messages: register address, then data). */
+static int cam_sensor_read8(unsigned int reg, unsigned int *val)
+{
+	u8 addr[2] = { reg >> 8, reg & 0xff };
+	u8 data;
+	struct i2c_msg msg[2] = {
+		{ .addr = i2c_addr, .flags = 0, .len = sizeof(addr), .buf = addr },
+		{ .addr = i2c_addr, .flags = I2C_M_RD, .len = 1, .buf = &data },
+	};
+	int ret;
+
+	if (!cam_i2c_adap)
+		return -ENODEV;
+
+	ret = i2c_transfer(cam_i2c_adap, msg, 2);
+	if (ret < 0)
+		return ret;
+	if (ret != 2)
+		return -EIO;
+	*val = data;
+	return 0;
 }
 
 static struct i2c_adapter *cam_i2c_get(void)
@@ -5203,6 +5358,310 @@ static const struct vb2_ops cam_vb2_ops = {
 	.stop_streaming = cam_vb2_stop_streaming,
 };
 
+/* ---- sensor modes ---- */
+
+/*
+ * The five tables in the generated header are the recording formats this
+ * IMX582 variant offers.  Selecting one replays the power-on table, the mode
+ * table and the VTS this port was verified with over I2C, which is the same
+ * sequence the bring-up script performs by hand, so an application can switch
+ * format through V4L2 instead of the module being reloaded with other
+ * exp_hsize/exp_vsize parameters.  cam_mode_idx (declared with the other
+ * state above) is the selected entry, or -1 while the run-time geometry comes
+ * from those parameters alone.
+ */
+static const struct cam_sensor_mode *cam_mode_get(int idx)
+{
+	if (idx < 0 || idx >= CAMCAP_IMX582_NMODES)
+		return NULL;
+
+	return &cam_imx582_modes[idx];
+}
+
+/*
+ * Which mode produces w x h when the converter bins by "bin" (1 = one output
+ * pixel per raw pixel, 2 = 2x2 average).  fps_x100 == 0 accepts any frame
+ * rate, otherwise the closest wins, which is how VIDIOC_S_PARM chooses
+ * between the 1080p120 and 1080p240 modes.
+ */
+static int cam_mode_match(unsigned int w, unsigned int h, unsigned int bin,
+			  unsigned int fps_x100)
+{
+	int best = -1;
+	unsigned int best_diff = 0;
+	int i;
+
+	if (bin != 1 && bin != 2)
+		return -EINVAL;
+
+	for (i = 0; i < CAMCAP_IMX582_NMODES; i++) {
+		const struct cam_sensor_mode *m = &cam_imx582_modes[i];
+		unsigned int diff;
+
+		if (m->hsize / bin != w || m->vsize / bin != h)
+			continue;
+		if (!fps_x100)
+			return i;
+
+		diff = m->fps_x100 > fps_x100 ? m->fps_x100 - fps_x100
+					      : fps_x100 - m->fps_x100;
+		if (best < 0 || diff < best_diff) {
+			best = i;
+			best_diff = diff;
+		}
+		if (!diff)
+			break;
+	}
+
+	return best;
+}
+
+/* the geometry the converter and the CAMSV registers work from */
+static void cam_mode_geometry(const struct cam_sensor_mode *m, unsigned int bin)
+{
+	cam_bin = bin;
+	cam_src_w = m->hsize;
+	cam_src_h = m->vsize;
+	cam_src_stride = m->hsize * 3 / 2;
+	out_width = m->hsize / bin;
+	out_height = m->vsize / bin;
+	exp_max = m->exp_max;
+	/*
+	 * 1080p240 holds 1236 lines in a frame, so an exposure the previous
+	 * mode was using can be longer than a whole frame here.  Clamp it, or
+	 * the sensor stretches every frame and the mode delivers a fraction of
+	 * its rate (the same failure as running preview with a 0x0c64
+	 * exposure).
+	 */
+	if (cam_sensor.exposure > exp_max)
+		cam_sensor.exposure = exp_max;
+	cam_mode_fps = m->fps_x100;
+}
+
+/*
+ * Keep V4L2_CID_EXPOSURE_ABSOLUTE in step with the mode: 1080p240 has 1236
+ * lines in a frame, so it cannot hold the exposure a 4000x3000 mode can, and
+ * an application writing a value past the range would be refused by the
+ * control framework for the wrong reason.
+ */
+static void cam_ctrl_update_exp_max(void)
+{
+	struct v4l2_ctrl *ctrl;
+
+	if (!cam_v4l2 || !cam_v4l2->ct_exposure)
+		return;
+
+	ctrl = cam_v4l2->ct_exposure;
+	__v4l2_ctrl_modify_range(ctrl, CAMCAP_EXP_MIN, (int)exp_max, 1,
+				 ctrl->val > (int)exp_max ? (int)exp_max
+							  : ctrl->val);
+}
+
+/*
+ * Retime the receiver for a new MIPI data rate.  Only two fields track the
+ * rate: HS_TRAIL_PARAMETER (and its enable) on each data lane of the D-PHY, and
+ * DMY_CYCLE in the CSI2 resynchronisation control.  The formulas are the
+ * vendor's (isp71_ref mtk_cam-seninf-hw_phy_3_0.c), i.e. exactly what
+ * scripts/port2_rx71.py computes for the bring-up rate, so for the 1370 Mbps
+ * modes this writes the values userspace already programmed.
+ */
+static void cam_rx_set_rate(unsigned int mbps, bool force)
+{
+	u64 data_rate, t;
+	u32 cycles, ui_224, hs_trail, v;
+	unsigned int i;
+
+	if (!mbps || !rx_rate)
+		return;
+	if (!force && mbps == cam_rx_mbps)
+		return;
+	if (!cam_dphy || !cam_seninf) {
+		pr_warn("rx: no D-PHY mapping, cannot retime for %u Mbps\n",
+			mbps);
+		return;
+	}
+
+	data_rate = (u64)mbps * 1000000;
+	cycles = (u32)div_u64(64ULL * CAMCAP_SENINF_CK, data_rate) + 1;
+	ui_224 = (u32)div_u64(224ULL * 1000, mbps);
+	if (ui_224 <= CAMCAP_DPHY_TRAIL_DT) {
+		hs_trail = 0;
+	} else {
+		t = (u64)(ui_224 - CAMCAP_DPHY_TRAIL_DT) * CAMCAP_SENINF_CK;
+		hs_trail = (u32)div_u64(t + 999999999ULL, 1000000000ULL);
+	}
+
+	for (i = 0; i < 4; i++) {
+		v = readl(cam_dphy + CAMCAP_DPHY_DATA_LANE(i));
+		v = (v & ~CAMCAP_DPHY_HS_TRAIL) | ((hs_trail & 0xff) << 8);
+		v &= ~CAMCAP_DPHY_HS_TRAIL_EN;
+		if (hs_trail)
+			v |= CAMCAP_DPHY_HS_TRAIL_EN;
+		writel(v, cam_dphy + CAMCAP_DPHY_DATA_LANE(i));
+	}
+
+	v = readl(cam_seninf + CAMCAP_CSI2_OFF + CAMCAP_CSI2_RESYNC);
+	v = (v & ~CAMCAP_CSI2_DMY_CYCLE) | ((cycles & 0xfff) << 16);
+	writel(v, cam_seninf + CAMCAP_CSI2_OFF + CAMCAP_CSI2_RESYNC);
+
+	cam_rx_mbps = mbps;
+	pr_info("rx: %u Mbps/lane, DMY_CYCLE %u, HS_TRAIL %u\n",
+		mbps, cycles, hs_trail);
+}
+
+/*
+ * Replay one vendor table as byte writes.  Each pair in the vendor header is a
+ * single byte register, so this is a 3-byte transfer per entry; the failure
+ * path reports the exact register, which is what turned up the leading-zero
+ * bug that made a mode switch leave every mode register at zero.
+ */
+static int cam_mode_write_table(const struct cam_mode_reg *regs,
+				unsigned int nregs, const char *what)
+{
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < nregs; i++) {
+		ret = cam_sensor_write8(regs[i].reg, regs[i].val);
+		if (ret) {
+			pr_err("mode: %s write %u/%u 0x%04x = 0x%02x failed (%d)\n",
+			       what, i + 1, nregs, regs[i].reg, regs[i].val, ret);
+			return ret;
+		}
+		if (mode_trace)
+			pr_info("mode: %s %u/%u 0x%04x = 0x%02x\n", what, i + 1,
+				nregs, regs[i].reg, regs[i].val);
+	}
+
+	return 0;
+}
+
+/* Read back the registers that prove the replay landed where it should. */
+static void cam_mode_verify(const struct cam_sensor_mode *m)
+{
+	static const unsigned int want[] = { 0x0100, 0x0101, 0x0112, 0x0114,
+					     0x0306, 0x0307, 0x0340, 0x0341 };
+	unsigned int i, j, v;
+
+	for (i = 0; i < ARRAY_SIZE(want); i++) {
+		unsigned int expect = 0xff;
+
+		for (j = 0; j < m->nregs; j++)
+			if (m->regs[j].reg == want[i])
+				expect = m->regs[j].val;
+		/* VTS is written from the descriptor, not from the table */
+		if (want[i] == 0x0340)
+			expect = m->vts >> 8;
+		else if (want[i] == 0x0341)
+			expect = m->vts & 0xff;
+		if (cam_sensor_read8(want[i], &v)) {
+			pr_warn("mode: verify 0x%04x read failed\n", want[i]);
+		} else {
+			pr_info("mode: verify 0x%04x = 0x%02x (table 0x%02x)%s\n",
+				want[i], v, expect,
+				expect != 0xff && v != expect ? "  <-- MISMATCH" : "");
+		}
+	}
+}
+
+/*
+ * Replay the power-on table and the mode table over I2C, then write the VTS.
+ * The vendor tables never touch the stream-on register (0x0100), so it is
+ * driven here; cam_sensor_valid is cleared so the governor rewrites exposure
+ * and gain from scratch on the next frame.
+ */
+static int cam_mode_program(int idx)
+{
+	const struct cam_sensor_mode *m = cam_mode_get(idx);
+	int ret;
+
+	if (!m)
+		return -EINVAL;
+	if (!cam_i2c_get())
+		return -ENODEV;
+
+	/*
+	 * The delays are the ones the verified userspace bring-up uses (see
+	 * scripts/imx582_bring.py, whose replay order and sleeps were measured
+	 * on the device): the sensor's PLL settles after the power-on table,
+	 * the mode table needs its own gap, and the MIPI output starts a moment
+	 * after 0x0100=1.
+	 */
+	ret = cam_sensor_write8(0x0100, 0x00);
+	msleep(20);
+	if (mode_init_replay) {
+		ret = cam_mode_write_table(cam_imx582_tbl_init,
+					   CAMCAP_IMX582_INIT_NREGS, "init");
+		msleep(20);
+	}
+	if (!ret)
+		ret = cam_mode_write_table(m->regs, m->nregs, m->name);
+	/* VTS is written separately: it is what sets the frame rate */
+	if (!ret)
+		ret = cam_sensor_write8(0x0340, m->vts >> 8);
+	if (!ret)
+		ret = cam_sensor_write8(0x0341, m->vts & 0xff);
+	msleep(50);
+
+	/*
+	 * The receiver has to be timed for the new link rate before the sensor
+	 * starts sending: m->mipi_mbps is what 0x030e/0x030f now holds.
+	 */
+	if (!ret)
+		cam_rx_set_rate(m->mipi_mbps, false);
+
+	if (!ret)
+		ret = cam_sensor_write8(0x0100, 0x01);
+	msleep(50);
+	if (ret)
+		return ret;
+
+	cam_mode_idx = idx;
+	cam_sensor_valid = false;
+	pr_info("mode: %s %ux%u, HTS %u VTS %u, %u.%02u fps, exp_max %u\n",
+		m->name, m->hsize, m->vsize, m->hts, m->vts,
+		m->fps_x100 / 100, m->fps_x100 % 100, m->exp_max);
+	if (mode_trace)
+		cam_mode_verify(m);
+
+	return 0;
+}
+
+/*
+ * Switch to a mode by name (the /proc/camcap "mode" command).  bin 0 keeps the
+ * current binning factor.
+ */
+static int cam_mode_select(const char *name, unsigned int bin)
+{
+	int i, ret;
+
+	for (i = 0; i < CAMCAP_IMX582_NMODES; i++)
+		if (!strcmp(cam_imx582_modes[i].name, name))
+			break;
+	if (i == CAMCAP_IMX582_NMODES) {
+		pr_err("mode: no such mode '%s'\n", name);
+		return -ENOENT;
+	}
+	if (cam_v4l2 && vb2_is_busy(&cam_v4l2->queue)) {
+		pr_err("mode: the device is streaming\n");
+		return -EBUSY;
+	}
+	if (!bin)
+		bin = cam_bin;
+	/* every table in the generated header has an even output window */
+	bin = bin == 1 ? 1 : 2;
+
+	ret = cam_mode_program(i);
+	if (ret)
+		return ret;
+	cam_mode_geometry(&cam_imx582_modes[i], bin);
+	cam_ctrl_update_exp_max();
+	pr_info("mode: output %ux%u YUYV, bin %u, %u bytes/frame\n",
+		out_width, out_height, cam_bin, out_width * out_height * 2);
+
+	return 0;
+}
+
 /* ---- V4L2 ioctls ---- */
 
 static int cam_vidioc_querycap(struct file *file, void *priv,
@@ -5250,27 +5709,82 @@ static int cam_vidioc_g_fmt(struct file *file, void *priv,
 }
 
 /*
- * There is exactly one format: the 2x2 binned full frame as YUYV.  try_fmt
- * reports it back for whatever the application asked for, rather than failing,
- * which is what camera applications expect.
+ * try_fmt reports the frame the application asked for when one of the sensor
+ * modes can produce it, and the frame that is running otherwise.  Failing
+ * outright makes camera applications give up, and silently answering with a
+ * different size makes them carry on with the wrong idea of the device.
  */
 static int cam_vidioc_try_fmt(struct file *file, void *priv,
 			      struct v4l2_format *f)
 {
-	cam_fill_pix(&f->fmt.pix);
+	struct v4l2_pix_format *pix = &f->fmt.pix;
+
+	pix->pixelformat = V4L2_PIX_FMT_YUYV;
+	if (pix->width && pix->height &&
+	    (cam_mode_match(pix->width, pix->height, 1, 0) >= 0 ||
+	     cam_mode_match(pix->width, pix->height, 2, 0) >= 0)) {
+		pix->field = V4L2_FIELD_NONE;
+		pix->bytesperline = pix->width * 2;
+		pix->sizeimage = pix->width * pix->height * 2;
+		pix->colorspace = V4L2_COLORSPACE_SRGB;
+		pix->ycbcr_enc = V4L2_YCBCR_ENC_601;
+		pix->quantization = V4L2_QUANTIZATION_FULL_RANGE;
+		pix->xfer_func = V4L2_XFER_FUNC_SRGB;
+	} else {
+		cam_fill_pix(pix);
+	}
 
 	return 0;
 }
 
+/*
+ * s_fmt selects a sensor mode and the binning factor the converter will use.
+ * The requested size is looked up at the current binning first, then at the
+ * other one; a size no mode can produce leaves the device as it is, which is
+ * what the single-format version of this driver always did.
+ */
 static int cam_vidioc_s_fmt(struct file *file, void *priv,
 			    struct v4l2_format *f)
 {
 	struct cam_v4l2_ctx *c = video_drvdata(file);
+	struct v4l2_pix_format *pix = &f->fmt.pix;
+	unsigned int w = pix->width, h = pix->height;
+	unsigned int bin;
+	int idx, ret = 0;
 
 	if (vb2_is_busy(&c->queue))
 		return -EBUSY;
 
-	cam_fill_pix(&f->fmt.pix);
+	if (pix->pixelformat && pix->pixelformat != V4L2_PIX_FMT_YUYV)
+		return -EINVAL;
+
+	/* the current binning first, then the other one */
+	bin = cam_bin;
+	idx = cam_mode_match(w, h, bin, 0);
+	if (idx < 0) {
+		bin = bin == 1 ? 2 : 1;
+		idx = cam_mode_match(w, h, bin, 0);
+	}
+	if (idx < 0) {
+		/* no mode can produce this size: keep the frame */
+		cam_fill_pix(pix);
+		return 0;
+	}
+
+	mutex_lock(&cam_lock);
+	if (idx != cam_mode_idx)
+		ret = cam_mode_program(idx);
+	if (!ret) {
+		cam_mode_geometry(&cam_imx582_modes[idx], bin);
+		cam_ctrl_update_exp_max();
+	}
+	mutex_unlock(&cam_lock);
+	if (ret)
+		return ret;
+
+	cam_fill_pix(pix);
+	pr_info("v4l2: s_fmt %ux%u -> %s %ux%u, bin %u\n", w, h,
+		cam_imx582_modes[idx].name, out_width, out_height, cam_bin);
 
 	return 0;
 }
@@ -5278,28 +5792,139 @@ static int cam_vidioc_s_fmt(struct file *file, void *priv,
 static int cam_vidioc_enum_framesizes(struct file *file, void *priv,
 				      struct v4l2_frmsizeenum *fsize)
 {
-	if (fsize->index || fsize->pixel_format != V4L2_PIX_FMT_YUYV)
+	struct {
+		unsigned int w, h;
+	} seen[CAMCAP_IMX582_NMODES * 2];
+	unsigned int n = 0;
+	int i, b;
+
+	if (fsize->pixel_format != V4L2_PIX_FMT_YUYV)
 		return -EINVAL;
 
-	fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
-	fsize->discrete.width = out_width;
-	fsize->discrete.height = out_height;
+	for (i = 0; i < CAMCAP_IMX582_NMODES; i++) {
+		for (b = 1; b <= 2; b++) {
+			unsigned int w = cam_imx582_modes[i].hsize / b;
+			unsigned int h = cam_imx582_modes[i].vsize / b;
+			unsigned int k;
 
-	return 0;
+			for (k = 0; k < n; k++)
+				if (seen[k].w == w && seen[k].h == h)
+					break;
+			if (k < n)	/* another mode already lists it */
+				continue;
+			if (n == fsize->index) {
+				fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+				fsize->discrete.width = w;
+				fsize->discrete.height = h;
+				return 0;
+			}
+			seen[n].w = w;
+			seen[n].h = h;
+			n++;
+		}
+	}
+
+	return -EINVAL;
+}
+
+static unsigned int cam_gcd(unsigned int a, unsigned int b)
+{
+	while (b) {
+		unsigned int t = a % b;
+
+		a = b;
+		b = t;
+	}
+
+	return a;
 }
 
 static int cam_vidioc_enum_frameintervals(struct file *file, void *priv,
 					  struct v4l2_frmivalenum *fival)
 {
-	if (fival->index || fival->pixel_format != V4L2_PIX_FMT_YUYV ||
-	    fival->width != out_width || fival->height != out_height)
+	unsigned int k = 0;
+	int i, b;
+
+	if (fival->pixel_format != V4L2_PIX_FMT_YUYV)
 		return -EINVAL;
 
-	fival->type = V4L2_FRMIVAL_TYPE_DISCRETE;
-	fival->discrete.numerator = 1;
-	fival->discrete.denominator = 8;
+	for (i = 0; i < CAMCAP_IMX582_NMODES; i++) {
+		for (b = 1; b <= 2; b++) {
+			unsigned int fps = cam_imx582_modes[i].fps_x100;
+			unsigned int g;
+
+			if (cam_imx582_modes[i].hsize / b != fival->width ||
+			    cam_imx582_modes[i].vsize / b != fival->height)
+				continue;
+			if (k++ != fival->index)
+				continue;
+
+			g = cam_gcd(fps, 100) ? cam_gcd(fps, 100) : 1;
+			fival->type = V4L2_FRMIVAL_TYPE_DISCRETE;
+			fival->discrete.numerator = 100 / g;
+			fival->discrete.denominator = fps / g;
+
+			return 0;
+		}
+	}
+
+	return -EINVAL;
+}
+
+/*
+ * The frame rate is a property of the selected sensor mode, so s_parm is what
+ * chooses between two modes that produce the same size (4000x2256 at 30 or
+ * 60 fps, 1920x1080 at 120 or 240 fps).
+ */
+static int cam_vidioc_g_parm(struct file *file, void *priv,
+			     struct v4l2_streamparm *p)
+{
+	if (p->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		return -EINVAL;
+
+	p->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
+	p->parm.capture.timeperframe.numerator = 1;
+	p->parm.capture.timeperframe.denominator = cam_mode_fps / 100;
+	p->parm.capture.readbuffers = 0;
 
 	return 0;
+}
+
+static int cam_vidioc_s_parm(struct file *file, void *priv,
+			     struct v4l2_streamparm *p)
+{
+	struct cam_v4l2_ctx *c = video_drvdata(file);
+	unsigned int num, den, want;
+	int idx, ret = 0;
+
+	if (p->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		return -EINVAL;
+	if (vb2_is_busy(&c->queue))
+		return -EBUSY;
+
+	num = p->parm.capture.timeperframe.numerator;
+	den = p->parm.capture.timeperframe.denominator;
+	want = (num && den) ? (unsigned int)div_u64((u64)den * 100, num) : 0;
+	idx = want ? cam_mode_match(out_width, out_height, cam_bin, want) : -1;
+	if (idx < 0)
+		return cam_vidioc_g_parm(file, priv, p);	/* nothing closer */
+
+	mutex_lock(&cam_lock);
+	if (idx != cam_mode_idx)
+		ret = cam_mode_program(idx);
+	if (!ret) {
+		cam_mode_geometry(&cam_imx582_modes[idx], cam_bin);
+		cam_ctrl_update_exp_max();
+	}
+	mutex_unlock(&cam_lock);
+	if (ret)
+		return ret;
+
+	pr_info("v4l2: s_parm %u/%u -> %s, %u.%02u fps\n", num, den,
+		cam_imx582_modes[idx].name, cam_mode_fps / 100,
+		cam_mode_fps % 100);
+
+	return cam_vidioc_g_parm(file, priv, p);
 }
 
 static const struct v4l2_ioctl_ops cam_v4l2_ioctl_ops = {
@@ -5310,6 +5935,8 @@ static const struct v4l2_ioctl_ops cam_v4l2_ioctl_ops = {
 	.vidioc_s_fmt_vid_cap = cam_vidioc_s_fmt,
 	.vidioc_enum_framesizes = cam_vidioc_enum_framesizes,
 	.vidioc_enum_frameintervals = cam_vidioc_enum_frameintervals,
+	.vidioc_g_parm = cam_vidioc_g_parm,
+	.vidioc_s_parm = cam_vidioc_s_parm,
 	.vidioc_reqbufs = vb2_ioctl_reqbufs,
 	.vidioc_querybuf = vb2_ioctl_querybuf,
 	.vidioc_qbuf = vb2_ioctl_qbuf,
@@ -5693,7 +6320,18 @@ static int __init cam_cap_init(void)
 			unsigned long need =
 				ALIGN((unsigned long)cam_src_stride * cam_src_h,
 				      1024UL * 1024);
+			/*
+			 * Leave room for the largest mode VIDIOC_S_FMT can
+			 * select, so switching format never has to reallocate
+			 * the frame buffer.  For the verified 4000x3000 mode
+			 * this is exactly the same 18 874 368 bytes as before.
+			 */
+			unsigned long maxneed =
+				ALIGN((unsigned long)CAMCAP_IMX582_MAX_FRAME,
+				      1024UL * 1024);
 
+			if (need < maxneed)
+				need = maxneed;
 			if (frame_bytes < need) {
 				pr_info("v4l2_enable: growing frame_bytes %lu -> %lu\n",
 					frame_bytes, need);
@@ -5722,6 +6360,22 @@ static int __init cam_cap_init(void)
 			out_width = cam_src_w / cam_bin;
 			out_height = cam_src_h / cam_bin;
 		}
+		/*
+		 * Which table the boot parameters correspond to, so the mode
+		 * commands can name it and a later S_FMT for the same size
+		 * does not have to replay the register tables.  The match is on
+		 * the *output* frame: a table's window is the sensor's, so
+		 * 4000x3000 at bin 2 is the 2000x1500 the application sees.
+		 */
+		cam_mode_idx = cam_mode_match(out_width, out_height, cam_bin, 0);
+		cam_mode_fps = cam_mode_idx >= 0 ?
+			cam_imx582_modes[cam_mode_idx].fps_x100 : 0;
+		if (cam_mode_idx >= 0)
+			pr_info("mode: %s (from exp_hsize/exp_vsize)\n",
+				cam_imx582_modes[cam_mode_idx].name);
+		else
+			pr_warn("mode: %ux%u (bin %u) matches no table in imx582_modes.h\n",
+				out_width, out_height, cam_bin);
 		pr_info("output: %ux%u YUYV, bin %u, %u bytes/frame\n",
 			out_width, out_height, cam_bin,
 			out_width * out_height * 2);
@@ -6022,6 +6676,17 @@ static int __init cam_cap_init(void)
 		pr_warn("ioremap(%#lx) failed, SENINF routing disabled\n",
 			seninf_base);
 
+	/*
+	 * --- 4c. CSI D-PHY_TOP, so a mode switch can retime the receiver for
+	 * the sensor's new link rate.  Optional in the same sense as 4b: without
+	 * it the modes that keep 1370 Mbps per lane still switch, the 1964 Mbps
+	 * ones do not.
+	 */
+	cam_dphy = ioremap(dphy_base, CAMCAP_DPHY_SIZE);
+	if (!cam_dphy)
+		pr_warn("ioremap(%#lx) failed, receiver retiming disabled\n",
+			dphy_base);
+
 	/* --- 5. procfs entries --- */
 	cam_proc = proc_create("camcap", 0644, NULL, &camcap_proc_ops);
 	if (!cam_proc) {
@@ -6089,6 +6754,10 @@ err_remove_proc:
 	proc_remove(cam_proc);
 	cam_proc = NULL;
 err_iounmap:
+	if (cam_dphy) {
+		iounmap(cam_dphy);
+		cam_dphy = NULL;
+	}
 	if (cam_seninf) {
 		iounmap(cam_seninf);
 		cam_seninf = NULL;
@@ -6152,6 +6821,10 @@ static void __exit cam_cap_exit(void)
 	cam_proc = NULL;
 
 	/* 4. unmap the register blocks */
+	if (cam_dphy) {
+		iounmap(cam_dphy);
+		cam_dphy = NULL;
+	}
 	if (cam_seninf) {
 		iounmap(cam_seninf);
 		cam_seninf = NULL;
