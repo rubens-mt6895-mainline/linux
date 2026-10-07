@@ -494,6 +494,20 @@ config MISC_RTSX
 	tristate
 	default MISC_RTSX_PCI || MISC_RTSX_USB
 
+config GOODIX_FP
+	tristate "Goodix gf_spi fingerprint sensor SPI driver"
+	depends on SPI
+	depends on REGULATOR
+	depends on GPIOLIB
+	help
+	  SPI transport driver for the Goodix gf_spi capacitive fingerprint
+	  sensor fitted to the rubens (Redmi K50, MT6895). It owns the sensor's
+	  3.3 V power rail, reset and finger-IRQ lines and exposes a raw SPI
+	  transfer ioctl (/dev/goodix_fp) for the userspace trustlet loader
+	  (ta_host) that runs the vendor "goodix-fp" TA as a plain aarch64 ELF.
+
+	  If unsure, say N.
+
 config HISI_HIKEY_USB
 	tristate "USB GPIO Hub on HiSilicon Hikey 960/970 Platform"
 	depends on (OF && GPIOLIB) || COMPILE_TEST
