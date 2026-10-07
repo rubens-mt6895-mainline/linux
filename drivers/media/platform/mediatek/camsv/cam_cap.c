@@ -696,17 +696,34 @@ MODULE_PARM_DESC(v4l2_enable,
 		 "register a V4L2 capture device (/dev/videoN) and stream frames (default 0)");
 
 /*
- * Overlap capture and conversion with a second frame buffer.  Serially a frame
+ * Overlap capture and conversion with extra frame buffers.  Serially a frame
  * costs arm + conv (the CAMSV only reports "done" after the sensor has shifted
  * the whole frame out, and the conversion then has to run before the next arm),
  * which caps the rate at ~1/(arm+conv); with two slots it costs max(arm, conv)
- * instead.  It needs a second raw buffer, which cam_pipe_setup() gets from
- * alloc_contig_pages(); if that fails the driver quietly stays serial.
+ * instead, and with three the arm thread no longer has to wait for a
+ * conversion to release the slot it wants (see the pipe_slots parameter).  The
+ * extra raw buffers come from alloc_contig_pages(); if that fails the driver
+ * quietly stays serial.
  */
 static bool pipeline = true;
 module_param(pipeline, bool, 0644);
 MODULE_PARM_DESC(pipeline,
 		 "capture into a second buffer while the previous frame is converted (default 1; 0 = arm and convert serially)");
+
+/*
+ * How many raw frame buffers the capture pipeline rotates through.
+ *
+ * Two buffers hide the conversion behind the sensor readout, but they do not
+ * keep the arm thread at the sensor: with only two slots, arming frame N+1 has
+ * to wait for the converter to release frame N-1, which costs the conversion
+ * plus (on average) half a sensor period -- measured as period = conv + P/2.
+ * A third slot breaks that dependency, so the period becomes max(P, conv) and
+ * a conversion that is shorter than the sensor period stops costing anything.
+ */
+static unsigned int pipe_slots = 3;
+module_param(pipe_slots, uint, 0644);
+MODULE_PARM_DESC(pipe_slots,
+		 "raw frame buffers in the capture pipeline, 2 to 4 (default 3)");
 
 /* Output geometry.  Must be CAMCAP_SRC_{WIDTH,HEIGHT} / CAMCAP_BIN. */
 static unsigned int out_width = 2000;
@@ -2382,6 +2399,9 @@ struct cam_conv_worker {
 
 #define CAMCAP_MAX_CONV	8
 
+/* Upper bound on the capture pipeline depth; see the pipe_slots parameter. */
+#define CAMCAP_PIPE_SLOTS	4
+
 /*
  * One raw frame buffer of the capture pipeline.
  *
@@ -2394,15 +2414,15 @@ struct cam_conv_worker {
  *
  * With two buffers the arm thread fills one while the converter thread reads
  * the other, so a frame costs max(arm, conv) and nothing else.  slot[0] is the
- * CMA buffer the module already owns; slot[1] is a second one allocated by
- * cam_pipe_setup().
+ * CMA buffer the module already owns; the rest are allocated by
+ * cam_slots_alloc() and handed out by cam_pipe_setup().
  */
 struct cam_slot {
 	u8		*va;		/* cacheable CPU view of the frame */
 	dma_addr_t	iova;		/* what CAMSV IMGO is pointed at */
 	phys_addr_t	phys;		/* for the DMA cache maintenance */
 	size_t		size;
-	struct page	*pages;		/* contiguous block, slot[1] only */
+	struct page	*pages;		/* contiguous block, extra slots only */
 	struct cam_v4l2_buf *vb;	/* buffer the converter fills in */
 	bool		full;		/* DMA done, converter has to pick it up */
 	bool		busy;		/* converter is reading it right now */
@@ -2439,12 +2459,13 @@ struct cam_v4l2_ctx {
 	wait_queue_head_t	conv_wq;
 	struct completion	conv_done;
 
-	/* two-slot capture pipeline (see struct cam_slot / cam_pipe_setup) */
-	struct cam_slot		slot[2];
+	/* capture pipeline (see struct cam_slot / cam_pipe_setup) */
+	struct cam_slot		slot[CAMCAP_PIPE_SLOTS];
+	unsigned int		nslots;		/* 1 = serial, else 2..CAP */
 	unsigned int		slot_next;	/* slot the arm thread arms next */
 	struct task_struct	*cthread;	/* converter thread */
 	wait_queue_head_t	pipe_wq;
-	bool			pipe_used;	/* slot[1] is up and in use */
+	bool			pipe_used;	/* extra slots are up and in use */
 	u32			pipe_frames;
 	/*
 	 * Frame-period histogram: the mean hides the frames that slipped a
@@ -3996,21 +4017,27 @@ static inline void cam_yuyv_pair(u8 *q, u32 r0, u32 g0, u32 b0,
 	u8 a1 = lut_ee[r1], d1 = lut_oo[b1], gg1 = cam_lut_g[g1];
 	int ly0 = (ya * a0 + 150 * gg0 + yb * d0) >> 8;
 	int ly1 = (ya * a1 + 150 * gg1 + yb * d1) >> 8;
-	int u0 = ((ua * a0 - 85 * gg0 + ub * d0) >> 8) + 128;
-	int u1 = ((ua * a1 - 85 * gg1 + ub * d1) >> 8) + 128;
-	int v0 = ((va * a0 - 107 * gg0 + vb * d0) >> 8) + 128;
-	int v1 = ((va * a1 - 107 * gg1 + vb * d1) >> 8) + 128;
+	/*
+	 * YUYV carries one Cb and one Cr for the pair, and the colour matrix is
+	 * linear, so the chroma of the averaged tap triple is the average of the
+	 * two pixels' chromas.  Doing it on the summed taps costs three multiplies
+	 * per pair instead of six, and differs from the per-pixel version only in
+	 * the rounding of the individual shifts (at most one LSB).
+	 */
+	int ar = a0 + a1, ag = gg0 + gg1, ab = d0 + d1;
+	int u = ((ua * ar - 85 * ag + ub * ab) >> 9) + 128;
+	int v = ((va * ar - 107 * ag + vb * ab) >> 9) + 128;
 
 	/* chroma gain around 128, then clamp to byte range */
-	u0 = ((u0 - 128) * sat) / 128 + 128;
-	u1 = ((u1 - 128) * sat) / 128 + 128;
-	v0 = ((v0 - 128) * sat) / 128 + 128;
-	v1 = ((v1 - 128) * sat) / 128 + 128;
+	if (sat != 128) {
+		u = ((u - 128) * sat) / 128 + 128;
+		v = ((v - 128) * sat) / 128 + 128;
+	}
 
 	q[0] = cam_u8_clamp(ly1);
-	q[1] = cam_u8_clamp((u0 + u1) >> 1);
+	q[1] = cam_u8_clamp(u);
 	q[2] = cam_u8_clamp(ly0);
-	q[3] = cam_u8_clamp((v0 + v1) >> 1);
+	q[3] = cam_u8_clamp(v);
 }
 
 /*
@@ -4177,6 +4204,19 @@ static void cam_unpack_row(const u8 *line, u16 *out, unsigned int n)
 }
 
 /*
+ * The same, but into a row padded with one duplicated sample at each end, so
+ * that the bilinear taps of the inner loop can index x-1 .. x+3 unconditionally.
+ * The row has to be laid out at out[1..n], i.e. the caller passes the buffer
+ * base and the loop reads column x at index x + 1.
+ */
+static inline void cam_unpack_row_pad(const u8 *line, u16 *out, unsigned int n)
+{
+	cam_unpack_row(line, out + 1, n);
+	out[0] = out[1];
+	out[n + 1] = out[n];
+}
+
+/*
  * The same full-size bilinear conversion as the reference above, with the raw
  * rows expanded once into u16 scratch rows instead of decoded again for every
  * neighbour.  The bilinear taps overlap so heavily that the per-pixel version
@@ -4209,48 +4249,47 @@ static void cam_v4l2_convert_full_fast(const u8 *src, u8 *dst,
 	const u8 *lut_ee = rb_swap ? cam_lut_b : cam_lut_r;	/* (0,0) tap */
 	const u8 *lut_oo = rb_swap ? cam_lut_r : cam_lut_b;	/* (1,1) tap */
 
-	rows = kmalloc_array(3 * (size_t)rw, sizeof(u16), GFP_KERNEL);
+	rows = kmalloc_array(3 * (size_t)(rw + 2), sizeof(u16), GFP_KERNEL);
 	if (!rows) {
 		cam_v4l2_convert_full_ref(src, dst, first, last, acc);
 		return;
 	}
 
 	lm = rows;
-	l0 = rows + rw;
-	lp = rows + 2 * rw;
-	cam_unpack_row(src + (size_t)(first ? first - 1 : 0) * stride, lm, rw);
-	cam_unpack_row(src + (size_t)first * stride, l0, rw);
+	l0 = rows + rw + 2;
+	lp = rows + 2 * (rw + 2);
+	cam_unpack_row_pad(src + (size_t)(first ? first - 1 : 0) * stride, lm, rw);
+	cam_unpack_row_pad(src + (size_t)first * stride, l0, rw);
 
 	for (y = first; y < last; y++) {
 		u8 *o = dst + (size_t)(H - 1 - y) * W * 2;
 		bool st_on = !((y >> 1) & (CAMCAP_STATS_ROW_STEP - 1));
 		unsigned int nx = y + 1 < rh ? y + 1 : y;
 
-		cam_unpack_row(src + (size_t)nx * stride, lp, rw);
+		cam_unpack_row_pad(src + (size_t)nx * stride, lp, rw);
 
 		for (x = 0; x + 1 < W; x += 2) {
-			unsigned int xm = x ? x - 1 : 0;
-			unsigned int xp = x + 1;
-			unsigned int xpp = x + 2 < rw ? x + 2 : rw - 1;
+			unsigned int xp = x + 2;
 			u32 r0, g0, b0, r1, g1, b1;
 			u8 *q = o + (size_t)(n - 1 - (x >> 1)) * 4;
 
+			/* columns sit at index x+1 (see cam_unpack_row_pad) */
 			if (!(y & 1)) {
 				/* x holds R, x+1 holds Gr */
-				r0 = l0[x];
-				g0 = (l0[xm] + l0[xp] + lm[x] + lp[x]) >> 2;
-				b0 = (lm[xm] + lm[xp] + lp[xm] + lp[xp]) >> 2;
+				r0 = l0[x + 1];
+				g0 = (l0[x] + l0[xp] + lm[x + 1] + lp[x + 1]) >> 2;
+				b0 = (lm[x] + lm[xp] + lp[x] + lp[xp]) >> 2;
 				g1 = l0[xp];
-				r1 = (l0[x] + l0[xpp]) >> 1;
+				r1 = (l0[x + 1] + l0[x + 3]) >> 1;
 				b1 = (lm[xp] + lp[xp]) >> 1;
 			} else {
 				/* x holds Gb, x+1 holds B */
-				g0 = l0[x];
-				r0 = (lm[x] + lp[x]) >> 1;
-				b0 = (l0[xm] + l0[xp]) >> 1;
+				g0 = l0[x + 1];
+				r0 = (lm[x + 1] + lp[x + 1]) >> 1;
+				b0 = (l0[x] + l0[xp]) >> 1;
 				b1 = l0[xp];
-				g1 = (l0[x] + l0[xpp] + lm[xp] + lp[xp]) >> 2;
-				r1 = (lm[x] + lm[xpp] + lp[x] + lp[xpp]) >> 2;
+				g1 = (l0[x + 1] + l0[x + 3] + lm[xp] + lp[xp]) >> 2;
+				r1 = (lm[x + 1] + lm[x + 3] + lp[x + 1] + lp[x + 3]) >> 2;
 			}
 			cam_yuyv_pair(q, r0, g0, b0, r1, g1, b1, sat,
 				      lut_ee, lut_oo);
@@ -4526,10 +4565,16 @@ static void cam_stats_finish(struct cam_stats *st)
  * thread publishes the destination and bumps a generation counter, wakes every
  * worker and waits for all of them to complete().
  */
-static unsigned int conv_threads = 4;	/* measured sweet spot (4 = ~2x fps) */
+static unsigned int conv_threads = 8;	/* measured: 8 threads is what the two
+					 * fast sensor modes need (1080p120 and
+					 * 4000x2256@60 are converter bound); the
+					 * smaller frames do not care, and the
+					 * workers are niced to 10 so they cannot
+					 * starve the desktop.
+					 */
 module_param(conv_threads, uint, 0644);
 MODULE_PARM_DESC(conv_threads,
-		 "conversion threads: 1 = single threaded, 2..8 = parallel worker pool (default 4; 8 adds nothing, the converter is memory bound above 4)");
+		 "conversion threads: 1 = single threaded, 2..8 = parallel worker pool (default 8; the pool only runs for the duration of a frame and its workers are niced to 10)");
 
 static int cam_conv_thread(void *arg)
 {
@@ -4780,35 +4825,41 @@ static void cam_slot_sync(struct cam_slot *s)
 }
 
 /*
- * The second frame buffer.  Slot[0] is the buffer the module already owns
- * (CMA, mapped at cam_frame_pa); slot[1] is what makes the pipeline possible.
- * CMA cannot hold two 18 MB buffers (measured CmaTotal 32768 kB / CmaFree
- * 10144 kB) and the buddy allocator cannot return one block of that size
- * either (MAX_ORDER is 10, 4 MiB), but alloc_contig_pages() can -- it migrates
- * pages and takes the range out of the normal allocator, which is what a frame
- * buffer wants anyway.  The block is ordinary System RAM, so page_address() is
- * a cacheable linear-map address and cam_slot_sync() is all the maintenance it
- * needs; the IOVA is installed by hand because
- * iommu_dma_alloc_noncontiguous() aborts with -EEXIST on io-pgtable-arm-v7s.
+ * The extra frame buffers of the capture pipeline.  Slot[0] is the buffer the
+ * module already owns (CMA, mapped at cam_frame_pa); the slots handed out below
+ * are what make the pipeline possible.  CMA cannot hold two 18 MB buffers
+ * (measured CmaTotal 32768 kB / CmaFree 10144 kB) and the buddy allocator
+ * cannot return one block of that size either (MAX_ORDER is 10, 4 MiB), but
+ * alloc_contig_pages() can -- it migrates pages and takes the range out of the
+ * normal allocator, which is what a frame buffer wants anyway.  The block is
+ * ordinary System RAM, so page_address() is a cacheable linear-map address and
+ * cam_slot_sync() is all the maintenance it needs; the IOVA is installed by
+ * hand because iommu_dma_alloc_noncontiguous() aborts with -EEXIST on
+ * io-pgtable-arm-v7s.
  */
-static struct cam_slot cam_slot1_buf;
-static bool cam_slot1_ok;
+static struct cam_slot cam_slot_buf[CAMCAP_PIPE_SLOTS - 1];
+static unsigned int cam_slot_extra;	/* how many of them are live */
 
-static void cam_slot1_release(void)
+static void cam_slots_release(void)
 {
-	unsigned long nr;
+	unsigned int i;
 
-	if (!cam_slot1_buf.pages)
-		return;
-	nr = (unsigned long)(PAGE_ALIGN(cam_slot1_buf.size) >> PAGE_SHIFT);
-	if (cam_iommu_dom && cam_slot1_buf.iova)
-		iommu_unmap(cam_iommu_dom, cam_slot1_buf.iova, cam_slot1_buf.size);
-	free_contig_range(page_to_pfn(cam_slot1_buf.pages), nr);
-	memset(&cam_slot1_buf, 0, sizeof(cam_slot1_buf));
-	cam_slot1_ok = false;
+	for (i = 0; i < ARRAY_SIZE(cam_slot_buf); i++) {
+		struct cam_slot *s = &cam_slot_buf[i];
+		unsigned long nr;
+
+		if (!s->pages)
+			continue;
+		nr = (unsigned long)(PAGE_ALIGN(s->size) >> PAGE_SHIFT);
+		if (cam_iommu_dom && s->iova)
+			iommu_unmap(cam_iommu_dom, s->iova, s->size);
+		free_contig_range(page_to_pfn(s->pages), nr);
+		memset(s, 0, sizeof(*s));
+	}
+	cam_slot_extra = 0;
 }
 
-static void cam_slot1_alloc(void)
+static void cam_slots_alloc(void)
 {
 	/*
 	 * The display IOMMU domain is shared, so the window is picked by trying
@@ -4821,10 +4872,9 @@ static void cam_slot1_alloc(void)
 		0x30000000, 0x34000000, 0x38000000, 0x3c000000,
 		0x40000000, 0x48000000, 0x50000000, 0x60000000,
 	};
-	unsigned long nr;
-	unsigned int i;
-	int mret = -ENOMEM;
+	unsigned int want, k;
 
+	cam_slot_extra = 0;
 	if (!pipeline || !cam_buf_size)
 		return;
 	if (!cam_iommu_dom) {
@@ -4832,58 +4882,83 @@ static void cam_slot1_alloc(void)
 		return;
 	}
 
-	nr = (unsigned long)(PAGE_ALIGN(cam_buf_size) >> PAGE_SHIFT);
-	/*
-	 * The node has to be a real one.  alloc_contig_frozen_pages() starts
-	 * from node_zonelist(nid, gfp_mask), so NUMA_NO_NODE walks
-	 * node_data[-1] and faults inside the allocator (measured: a page fault
-	 * at alloc_contig_frozen_pages_noprof+0x9c that killed the caller);
-	 * in-tree callers pass first_online_node.
-	 */
-	cam_slot1_buf.pages = alloc_contig_pages(nr, GFP_KERNEL,
-						 numa_node_id(), NULL);
-	if (!cam_slot1_buf.pages) {
-		pr_warn("pipeline: no contiguous %lu page block, capturing serially\n",
-			nr);
-		return;
-	}
-	cam_slot1_buf.va = page_address(cam_slot1_buf.pages);
-	cam_slot1_buf.phys = page_to_phys(cam_slot1_buf.pages);
-	cam_slot1_buf.size = cam_buf_size;
-	if (!cam_slot1_buf.va) {
-		pr_warn("pipeline: contiguous block has no linear mapping, capturing serially\n");
-		goto err;
-	}
+	want = clamp(pipe_slots, 2u, (unsigned int)CAMCAP_PIPE_SLOTS) - 1;
 
-	for (i = 0; i < ARRAY_SIZE(probe); i++) {
-		mret = iommu_map(cam_iommu_dom, probe[i], cam_slot1_buf.phys,
-				 cam_slot1_buf.size,
-				 IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
-		if (!mret) {
-			cam_slot1_buf.iova = probe[i];
+	for (k = 0; k < want; k++) {
+		struct cam_slot *s = &cam_slot_buf[k];
+		unsigned long nr;
+		unsigned int i;
+		int mret = -ENOMEM;
+
+		nr = (unsigned long)(PAGE_ALIGN(cam_buf_size) >> PAGE_SHIFT);
+		/*
+		 * The node has to be a real one.  alloc_contig_frozen_pages()
+		 * starts from node_zonelist(nid, gfp_mask), so NUMA_NO_NODE
+		 * walks node_data[-1] and faults inside the allocator
+		 * (measured: a page fault at
+		 * alloc_contig_frozen_pages_noprof+0x9c that killed the
+		 * caller); in-tree callers pass first_online_node.
+		 */
+		s->pages = alloc_contig_pages(nr, GFP_KERNEL,
+					      numa_node_id(), NULL);
+		if (!s->pages) {
+			pr_warn("pipeline: no contiguous %lu page block, capturing serially\n",
+				nr);
 			break;
 		}
-	}
-	if (mret) {
-		pr_warn("pipeline: no free IOVA window for the second buffer (%d), capturing serially\n",
-			mret);
-		goto err;
-	}
+		s->va = page_address(s->pages);
+		s->phys = page_to_phys(s->pages);
+		s->size = cam_buf_size;
+		if (!s->va) {
+			pr_warn("pipeline: contiguous block %u has no linear mapping, capturing serially\n",
+				k + 1);
+			goto err;
+		}
 
-	cam_slot1_ok = true;
-	pr_info("pipeline: second frame buffer %lu bytes at pa %#llx iova %#llx (cacheable %p)\n",
-		(unsigned long)cam_slot1_buf.size,
-		(unsigned long long)cam_slot1_buf.phys,
-		(unsigned long long)cam_slot1_buf.iova, cam_slot1_buf.va);
+		for (i = 0; i < ARRAY_SIZE(probe); i++) {
+			unsigned int j;
+			bool used = false;
+
+			/* an earlier slot may already own this window */
+			for (j = 0; j < k; j++) {
+				if (cam_slot_buf[j].iova == probe[i]) {
+					used = true;
+					break;
+				}
+			}
+			if (used)
+				continue;
+
+			mret = iommu_map(cam_iommu_dom, probe[i], s->phys,
+					 s->size, IOMMU_READ | IOMMU_WRITE,
+					 GFP_KERNEL);
+			if (!mret) {
+				s->iova = probe[i];
+				break;
+			}
+		}
+		if (mret) {
+			pr_warn("pipeline: no free IOVA window for buffer %u (%d), capturing serially\n",
+				k + 1, mret);
+			goto err;
+		}
+
+		cam_slot_extra = k + 1;
+		pr_info("pipeline: frame buffer %u of %u, %lu bytes at pa %#llx iova %#llx (cacheable %p)\n",
+			k + 1, want, (unsigned long)s->size,
+			(unsigned long long)s->phys,
+			(unsigned long long)s->iova, s->va);
+	}
 	return;
 
 err:
-	cam_slot1_release();
+	cam_slots_release();
 }
 
 static int cam_pipe_setup(struct cam_v4l2_ctx *c)
 {
 	struct cam_slot *s0 = &c->slot[0];
+	unsigned int i;
 
 	memset(c->slot, 0, sizeof(c->slot));
 	s0->va = (u8 *)(cam_frame_wb ? cam_frame_wb : cam_frame);
@@ -4891,23 +4966,27 @@ static int cam_pipe_setup(struct cam_v4l2_ctx *c)
 	s0->phys = cam_buf_phys;
 	s0->size = cam_buf_size;
 	c->slot_next = 0;
+	c->nslots = 1;
 	c->pipe_used = false;
 
-	if (!pipeline || !cam_slot1_ok || !s0->va || !cam_buf_size)
+	if (!pipeline || !cam_slot_extra || !s0->va || !cam_buf_size)
 		return -ENODEV;
 
-	c->slot[1] = cam_slot1_buf;	/* template; full/busy/vb stay zero */
+	for (i = 0; i < cam_slot_extra; i++)
+		c->slot[i + 1] = cam_slot_buf[i];	/* template; full/busy/vb stay zero */
+	c->nslots = cam_slot_extra + 1;
 	c->pipe_used = true;
 	return 0;
 }
 
 /*
- * Only the per-stream state goes away here: the second buffer and its IOVA
- * mapping belong to the module and are reused by the next streamon.
+ * Only the per-stream state goes away here: the extra buffers and their IOVA
+ * mappings belong to the module and are reused by the next streamon.
  */
 static void cam_pipe_free(struct cam_v4l2_ctx *c)
 {
 	c->pipe_used = false;
+	c->nslots = 1;
 	memset(c->slot, 0, sizeof(c->slot));
 }
 
@@ -5025,7 +5104,7 @@ static struct cam_slot *cam_pipe_take(struct cam_v4l2_ctx *c)
 {
 	unsigned int i;
 
-	for (i = 0; i < ARRAY_SIZE(c->slot); i++) {
+	for (i = 0; i < c->nslots; i++) {
 		struct cam_slot *s = &c->slot[i];
 
 		if (s->full && !s->busy) {
@@ -5035,6 +5114,18 @@ static struct cam_slot *cam_pipe_take(struct cam_v4l2_ctx *c)
 		}
 	}
 	return NULL;
+}
+
+/* Is any slot waiting to be read?  Used as the converter thread's wait test. */
+static bool cam_pipe_any_full(struct cam_v4l2_ctx *c)
+{
+	unsigned int i;
+
+	for (i = 0; i < c->nslots; i++) {
+		if (c->slot[i].full)
+			return true;
+	}
+	return false;
 }
 
 /*
@@ -5051,8 +5142,7 @@ static int cam_v4l2_conv_thread(void *arg)
 		struct cam_slot *s;
 
 		wait_event_interruptible(c->pipe_wq,
-			kthread_should_stop() ||
-			c->slot[0].full || c->slot[1].full);
+			kthread_should_stop() || cam_pipe_any_full(c));
 		if (kthread_should_stop())
 			break;
 
@@ -5159,7 +5249,9 @@ static int cam_v4l2_thread(void *arg)
 						VB2_BUF_STATE_ERROR);
 				continue;
 			}
-			c->slot_next ^= 1;
+			c->slot_next++;
+			if (c->slot_next >= c->nslots)
+				c->slot_next = 0;
 			/* hand the finished slot to the converter thread */
 			wake_up_interruptible(&c->pipe_wq);
 			continue;
@@ -5303,7 +5395,7 @@ static int cam_vb2_start_streaming(struct vb2_queue *q, unsigned int count)
 
 	pr_info("v4l2: streaming %ux%u YUYV, %u convert thread(s), %s\n",
 		out_width, out_height, c->nconv,
-		c->pipe_used ? "two-buffer pipeline" : "serial");
+		c->pipe_used ? "pipelined capture" : "serial capture");
 	return 0;
 }
 
@@ -6580,14 +6672,14 @@ static int __init cam_cap_init(void)
 	}
 
 	/*
-	 * --- 1b-bis. the second frame buffer, for the capture/conversion
+	 * --- 1b-bis. the extra frame buffers, for the capture/conversion
 	 * pipeline ---
 	 *
 	 * Allocated here and not at streamon: a failure is then a line in dmesg
 	 * while the module still comes up serial, instead of a failure inside
 	 * VIDIOC_STREAMON that takes the caller's ioctl with it.
 	 */
-	cam_slot1_alloc();
+	cam_slots_alloc();
 
 	/* --- 2. uncached readback alias (alloc_pages_exact path only) --- */
 	/*
@@ -6776,7 +6868,7 @@ err_unmap_alias:
 	}
 	cam_alias = NULL;
 err_free_pages:
-	cam_slot1_release();
+	cam_slots_release();
 	cam_unmap_iova();
 	if (cam_frame) {
 		if (cam_buf_is_dma && cam_dma_dev)
@@ -6849,7 +6941,7 @@ static void __exit cam_cap_exit(void)
 	kfree(cam_bounce);
 	cam_bounce = NULL;
 
-	cam_slot1_release();
+	cam_slots_release();
 	cam_unmap_iova();
 	if (cam_frame) {
 		if (cam_buf_is_dma && cam_dma_dev)

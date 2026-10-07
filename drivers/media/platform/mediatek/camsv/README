@@ -13,8 +13,12 @@ Capture path
 The driver owns the sensor I2C bus (bus 10, address 0x10) for runtime exposure,
 gain and open-loop DW9800V focus writes, programs SENINF / CAM_MUX / CAMSV,
 allocates the capture buffer with dma_alloc_coherent() from CMA and maps it
-through the display IOMMU.  A per-frame governor on the conversion thread
-drives AE and AWB; /proc/camcap exposes statistics and commands.
+through the display IOMMU.  Raw frames rotate through a three-slot capture
+pipeline, so the arm thread does not wait for the converter to release the
+previous slot; conversion itself runs on a worker pool whose threads are niced
+so the pool cannot starve the rest of the system.  A per-frame governor on the
+conversion thread drives AE and AWB; /proc/camcap exposes statistics and
+commands.
 
 Sensor modes
 ------------
@@ -47,13 +51,31 @@ Enable and load
 
   CONFIG_VIDEO_MTK_CAMSV=m
 
-  insmod cam_cap.ko v4l2_enable=1 conv_threads=4 pipeline=1
+  insmod cam_cap.ko v4l2_enable=1 pipe_slots=3 pipeline=1
+
+conv_threads defaults to 8 (the workers are niced to 10 and the pool only runs
+while a frame is converted), pipe_slots selects the capture pipeline depth
+(2..4, default 3; three measured fastest).  The converter is compiled with -O3
+for the same reason.
 
 Useful parameters: v4l2_bin (1 = full size output, 2 = 2x2 binned),
 v4l2_full_cache, exp_hsize/exp_vsize/v4l2_src_stride, exp_max, out_width/
-out_height, rb_swap, pipeline, conv_threads, ae_enable/awb_enable/af_enable,
-dphy_base, rx_rate, mode_trace, mode_init_replay.  See the module's
+out_height, rb_swap, pipeline, pipe_slots, conv_threads, ae_enable/awb_enable/
+af_enable, dphy_base, rx_rate, mode_trace, mode_init_replay.  See the module's
 MODULE_PARM_DESC strings.
+
+Reproducible builds
+-------------------
+
+The module the phone runs reports
+
+  srcversion: 493F61FF760E440C2CC5AA7
+  vermagic:   7.2.0-g0b8dd2e87b3d-dirty SMP preempt mod_unload aarch64
+
+The companion repository holds the kernel revision as the annotated tag
+k50-camera-base (0b8dd2e87b3d), the kernel configuration and a one-shot script
+that reproduces both values without a full kernel build.  See
+docs/REPRODUCIBLE_BUILD.md there.
 
 Notes, mode tables and bring-up scripts
 ---------------------------------------
