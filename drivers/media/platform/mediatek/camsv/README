@@ -1,0 +1,39 @@
+CAMSV capture driver for MT6895 (Redmi K50 / rubens)
+===================================================
+
+cam_cap.c is a self-contained CAMSV1 capture driver for the IMX582 rear camera
+on the MT6895 (Redmi K50, codename rubens).
+
+Capture path
+------------
+
+  IMX582 -> CSI-2 port 2 -> SENINF intf 4 -> SENINF mux 1 -> CAM_MUX 3
+         -> camsv1@1a110000 IMGO DMA -> V4L2 /dev/video0 (YUYV 422)
+
+The driver owns the sensor I2C bus (bus 10, address 0x10) for runtime exposure,
+gain and open-loop DW9800V focus writes, programs SENINF / CAM_MUX / CAMSV,
+allocates the capture buffer with dma_alloc_coherent() from CMA and maps it
+through the display IOMMU.  The vendor mode register tables are replayed by the
+bring-up scripts in the companion repository.  A per-frame governor on the
+conversion thread drives AE and AWB; /proc/camcap exposes statistics and
+commands.
+
+Enable and load
+---------------
+
+  CONFIG_VIDEO_MTK_CAMSV=m
+
+  insmod cam_cap.ko v4l2_enable=1 conv_threads=4 pipeline=1
+
+Useful parameters: v4l2_bin (1 = full size output, 2 = 2x2 binned),
+v4l2_full_cache, exp_hsize/exp_vsize/v4l2_src_stride, exp_max, out_width/
+out_height, rb_swap, pipeline, conv_threads, ae_enable/awb_enable/af_enable.
+See the module's MODULE_PARM_DESC strings.
+
+Notes, mode tables and bring-up scripts
+---------------------------------------
+
+  https://github.com/rubens-mt6895-mainline/k50-camera
+
+The sensor register tables the init sequence is based on come from the vendor
+kernel (MiCode/Xiaomi_Kernel_OpenSource, rubens-s-oss branch).
