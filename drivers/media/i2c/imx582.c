@@ -71,8 +71,9 @@
 
 #define IMX582_XCLK_FREQ		(24 * HZ_PER_MHZ)
 #define IMX582_LINK_FREQ		(685 * HZ_PER_MHZ)
+#define IMX582_LINK_FREQ_982MHZ		(982 * HZ_PER_MHZ)
 #define IMX582_DATA_LANES		4
-#define IMX582_PIXEL_RATE_MIN		734400000
+#define IMX582_PIXEL_RATE_MIN		705600000	/* custom3: 705.6 MHz */
 #define IMX582_PIXEL_RATE_MAX		864000000
 
 #define IMX582_NATIVE_WIDTH		8000
@@ -108,6 +109,7 @@
 
 static const s64 imx582_link_freq_menu[] = {
 	IMX582_LINK_FREQ,
+	IMX582_LINK_FREQ_982MHZ,
 };
 
 static const char * const imx582_test_pattern_menu[] = {
@@ -693,8 +695,308 @@ static const struct cci_reg_sequence imx582_4000x2256_regs[] = {
 		.frame_length_min = 3658,
 		.frame_length_def = 3658,
 		.exposure_def = 3610,
+		.link_freq_index = 0,
 		.regs = imx582_4000x2256_regs,
 		.num_regs = ARRAY_SIZE(imx582_4000x2256_regs),
+	},
+
+/*
+ * 4000x2256: Same window and binning as above, but twice the line rate: line length
+ * 4592, frame length 2560 (60 fps), 705.6 MHz pixel clock and 982 Mbit/s
+ * per lane. Vendor custom3 table, unchanged. The default frame length
+ * gives 30 fps; lower VBLANK for 60 fps.
+ */
+static const struct cci_reg_sequence imx582_4000x2256_60_regs[] = {
+	/* RAW10 output, four data lanes */
+	{ CCI_REG8(0x0112), 0x0a },
+	{ CCI_REG8(0x0113), 0x0a },
+	{ CCI_REG8(0x0114), 0x03 },
+	/* line length */
+	{ CCI_REG8(0x0342), 0x11 },
+	{ CCI_REG8(0x0343), 0xf0 },
+	/* frame length */
+	{ CCI_REG8(0x0340), 0x0a },
+	{ CCI_REG8(0x0341), 0x00 },
+	/* analog crop */
+	{ CCI_REG8(0x0344), 0x00 },
+	{ CCI_REG8(0x0345), 0x00 },
+	{ CCI_REG8(0x0346), 0x02 },
+	{ CCI_REG8(0x0347), 0xe8 },
+	{ CCI_REG8(0x0348), 0x1f },
+	{ CCI_REG8(0x0349), 0x3f },
+	{ CCI_REG8(0x034a), 0x14 },
+	{ CCI_REG8(0x034b), 0x87 },
+	/* binning */
+	{ CCI_REG8(0x0900), 0x01 },
+	{ CCI_REG8(0x0901), 0x22 },
+	{ CCI_REG8(0x0902), 0x08 },
+	{ CCI_REG8(0x3246), 0x81 },
+	{ CCI_REG8(0x3247), 0x81 },
+	{ CCI_REG8(0x0401), 0x00 },
+	{ CCI_REG8(0x0404), 0x00 },
+	{ CCI_REG8(0x0405), 0x10 },
+	/* digital crop */
+	{ CCI_REG8(0x0408), 0x00 },
+	{ CCI_REG8(0x0409), 0x00 },
+	{ CCI_REG8(0x040a), 0x00 },
+	{ CCI_REG8(0x040b), 0x00 },
+	/* output size */
+	{ CCI_REG8(0x040c), 0x0f },
+	{ CCI_REG8(0x040d), 0xa0 },
+	{ CCI_REG8(0x040e), 0x08 },
+	{ CCI_REG8(0x040f), 0xd0 },
+	{ CCI_REG8(0x034c), 0x0f },
+	{ CCI_REG8(0x034d), 0xa0 },
+	{ CCI_REG8(0x034e), 0x08 },
+	{ CCI_REG8(0x034f), 0xd0 },
+	{ CCI_REG8(0x0301), 0x05 },
+	{ CCI_REG8(0x0303), 0x02 },
+	/* PLL and MIPI rate */
+	{ CCI_REG8(0x0305), 0x02 },
+	{ CCI_REG8(0x0306), 0x00 },
+	{ CCI_REG8(0x0307), 0x93 },
+	{ CCI_REG8(0x030b), 0x01 },
+	{ CCI_REG8(0x030d), 0x18 },
+	{ CCI_REG8(0x030e), 0x07 },
+	{ CCI_REG8(0x030f), 0xac },
+	{ CCI_REG8(0x0310), 0x01 },
+	{ CCI_REG8(0x3620), 0x00 },
+	{ CCI_REG8(0x3621), 0x00 },
+	{ CCI_REG8(0x380c), 0x80 },
+	{ CCI_REG8(0x3c13), 0x00 },
+	{ CCI_REG8(0x3c14), 0x28 },
+	{ CCI_REG8(0x3c15), 0x28 },
+	{ CCI_REG8(0x3c16), 0x32 },
+	{ CCI_REG8(0x3c17), 0x46 },
+	{ CCI_REG8(0x3c18), 0x67 },
+	{ CCI_REG8(0x3c19), 0x8f },
+	{ CCI_REG8(0x3c1a), 0x8f },
+	{ CCI_REG8(0x3c1b), 0x99 },
+	{ CCI_REG8(0x3c1c), 0xad },
+	{ CCI_REG8(0x3c1d), 0xce },
+	{ CCI_REG8(0x3c1e), 0x8f },
+	{ CCI_REG8(0x3c1f), 0x8f },
+	{ CCI_REG8(0x3c20), 0x99 },
+	{ CCI_REG8(0x3c21), 0xad },
+	{ CCI_REG8(0x3c22), 0xce },
+	{ CCI_REG8(0x3c25), 0x22 },
+	{ CCI_REG8(0x3c26), 0x23 },
+	{ CCI_REG8(0x3c27), 0xe6 },
+	{ CCI_REG8(0x3c28), 0xe6 },
+	{ CCI_REG8(0x3c29), 0x08 },
+	{ CCI_REG8(0x3c2a), 0x0f },
+	{ CCI_REG8(0x3c2b), 0x14 },
+	{ CCI_REG8(0x3f0c), 0x00 },
+	{ CCI_REG8(0x3f14), 0x01 },
+	{ CCI_REG8(0x3f80), 0x00 },
+	{ CCI_REG8(0x3f81), 0x00 },
+	{ CCI_REG8(0x3f82), 0x04 },
+	{ CCI_REG8(0x3f83), 0x38 },
+	{ CCI_REG8(0x3f8c), 0x00 },
+	{ CCI_REG8(0x3f8d), 0x00 },
+	{ CCI_REG8(0x3ff4), 0x00 },
+	{ CCI_REG8(0x3ff5), 0x00 },
+	{ CCI_REG8(0x3ffc), 0x00 },
+	{ CCI_REG8(0x3ffd), 0x00 },
+	/* coarse integration time and gain defaults */
+	{ CCI_REG8(0x0202), 0x09 },
+	{ CCI_REG8(0x0203), 0xd0 },
+	{ CCI_REG8(0x0224), 0x01 },
+	{ CCI_REG8(0x0225), 0xf4 },
+	{ CCI_REG8(0x3fe0), 0x01 },
+	{ CCI_REG8(0x3fe1), 0xf4 },
+	{ CCI_REG8(0x0204), 0x00 },
+	{ CCI_REG8(0x0205), 0x70 },
+	{ CCI_REG8(0x0216), 0x00 },
+	{ CCI_REG8(0x0217), 0x70 },
+	{ CCI_REG8(0x0218), 0x01 },
+	{ CCI_REG8(0x0219), 0x00 },
+	{ CCI_REG8(0x020e), 0x01 },
+	{ CCI_REG8(0x020f), 0x00 },
+	{ CCI_REG8(0x0210), 0x01 },
+	{ CCI_REG8(0x0211), 0x00 },
+	{ CCI_REG8(0x0212), 0x01 },
+	{ CCI_REG8(0x0213), 0x00 },
+	{ CCI_REG8(0x0214), 0x01 },
+	{ CCI_REG8(0x0215), 0x00 },
+	{ CCI_REG8(0x3fe2), 0x00 },
+	{ CCI_REG8(0x3fe3), 0x70 },
+	{ CCI_REG8(0x3fe4), 0x01 },
+	{ CCI_REG8(0x3fe5), 0x00 },
+	{ CCI_REG8(0x3e20), 0x02 },
+	{ CCI_REG8(0x3e3b), 0x00 },
+	{ CCI_REG8(0x4034), 0x01 },
+	/* vendor image quality registers */
+	{ CCI_REG8(0x4035), 0xf0 },
+};
+	{
+		.width = 4000,
+		.height = 2256,
+		.crop = {
+			.left = 0,
+			.top = 744,
+			.width = 8000,
+			.height = 4512,
+		},
+		.pixel_rate = 705600000,
+		.line_length = 4592,
+		.frame_length_min = 2560,
+		/* 30 fps at this frame length; the mode reaches 60 fps */
+		.frame_length_def = 5120,
+		.exposure_def = 2512,
+		.link_freq_index = 1,
+		.regs = imx582_4000x2256_60_regs,
+		.num_regs = ARRAY_SIZE(imx582_4000x2256_60_regs),
+	},
+
+/*
+ * 1920x1080: H4V4 binning of the 8000x4320 window from (0, 832), digital crop from
+ * x = 40. Line length 2912, frame length 1236 (240 fps) and 982 Mbit/s
+ * per lane: the shortest readout of the sensor, so the least rolling
+ * shutter. Vendor hs_video table, unchanged. The default frame length
+ * gives 30 fps; lower VBLANK for the full rate.
+ */
+static const struct cci_reg_sequence imx582_1920x1080_240_regs[] = {
+	/* RAW10 output, four data lanes */
+	{ CCI_REG8(0x0112), 0x0a },
+	{ CCI_REG8(0x0113), 0x0a },
+	{ CCI_REG8(0x0114), 0x03 },
+	/* line length */
+	{ CCI_REG8(0x0342), 0x0b },
+	{ CCI_REG8(0x0343), 0x60 },
+	/* frame length */
+	{ CCI_REG8(0x0340), 0x04 },
+	{ CCI_REG8(0x0341), 0xd4 },
+	/* analog crop */
+	{ CCI_REG8(0x0344), 0x00 },
+	{ CCI_REG8(0x0345), 0x00 },
+	{ CCI_REG8(0x0346), 0x03 },
+	{ CCI_REG8(0x0347), 0x40 },
+	{ CCI_REG8(0x0348), 0x1f },
+	{ CCI_REG8(0x0349), 0x3f },
+	{ CCI_REG8(0x034a), 0x14 },
+	{ CCI_REG8(0x034b), 0x1f },
+	/* binning */
+	{ CCI_REG8(0x0900), 0x01 },
+	{ CCI_REG8(0x0901), 0x44 },
+	{ CCI_REG8(0x0902), 0x08 },
+	{ CCI_REG8(0x3246), 0x89 },
+	{ CCI_REG8(0x3247), 0x89 },
+	{ CCI_REG8(0x0401), 0x00 },
+	{ CCI_REG8(0x0404), 0x00 },
+	{ CCI_REG8(0x0405), 0x10 },
+	/* digital crop */
+	{ CCI_REG8(0x0408), 0x00 },
+	{ CCI_REG8(0x0409), 0x28 },
+	{ CCI_REG8(0x040a), 0x00 },
+	{ CCI_REG8(0x040b), 0x00 },
+	/* output size */
+	{ CCI_REG8(0x040c), 0x07 },
+	{ CCI_REG8(0x040d), 0x80 },
+	{ CCI_REG8(0x040e), 0x04 },
+	{ CCI_REG8(0x040f), 0x38 },
+	{ CCI_REG8(0x034c), 0x07 },
+	{ CCI_REG8(0x034d), 0x80 },
+	{ CCI_REG8(0x034e), 0x04 },
+	{ CCI_REG8(0x034f), 0x38 },
+	{ CCI_REG8(0x0301), 0x05 },
+	{ CCI_REG8(0x0303), 0x02 },
+	/* PLL and MIPI rate */
+	{ CCI_REG8(0x0305), 0x02 },
+	{ CCI_REG8(0x0306), 0x00 },
+	{ CCI_REG8(0x0307), 0xb4 },
+	{ CCI_REG8(0x030b), 0x01 },
+	{ CCI_REG8(0x030d), 0x18 },
+	{ CCI_REG8(0x030e), 0x07 },
+	{ CCI_REG8(0x030f), 0xac },
+	{ CCI_REG8(0x0310), 0x01 },
+	{ CCI_REG8(0x3620), 0x00 },
+	{ CCI_REG8(0x3621), 0x00 },
+	{ CCI_REG8(0x380c), 0x80 },
+	{ CCI_REG8(0x3c13), 0x00 },
+	{ CCI_REG8(0x3c14), 0x28 },
+	{ CCI_REG8(0x3c15), 0x28 },
+	{ CCI_REG8(0x3c16), 0x32 },
+	{ CCI_REG8(0x3c17), 0x46 },
+	{ CCI_REG8(0x3c18), 0x67 },
+	{ CCI_REG8(0x3c19), 0x8f },
+	{ CCI_REG8(0x3c1a), 0x8f },
+	{ CCI_REG8(0x3c1b), 0x99 },
+	{ CCI_REG8(0x3c1c), 0xad },
+	{ CCI_REG8(0x3c1d), 0xce },
+	{ CCI_REG8(0x3c1e), 0x8f },
+	{ CCI_REG8(0x3c1f), 0x8f },
+	{ CCI_REG8(0x3c20), 0x99 },
+	{ CCI_REG8(0x3c21), 0xad },
+	{ CCI_REG8(0x3c22), 0xce },
+	{ CCI_REG8(0x3c25), 0x22 },
+	{ CCI_REG8(0x3c26), 0x23 },
+	{ CCI_REG8(0x3c27), 0xe6 },
+	{ CCI_REG8(0x3c28), 0xe6 },
+	{ CCI_REG8(0x3c29), 0x08 },
+	{ CCI_REG8(0x3c2a), 0x0f },
+	{ CCI_REG8(0x3c2b), 0x14 },
+	{ CCI_REG8(0x3f0c), 0x00 },
+	{ CCI_REG8(0x3f14), 0x00 },
+	{ CCI_REG8(0x3f80), 0x00 },
+	{ CCI_REG8(0x3f81), 0x00 },
+	{ CCI_REG8(0x3f82), 0x00 },
+	{ CCI_REG8(0x3f83), 0x00 },
+	{ CCI_REG8(0x3f8c), 0x00 },
+	{ CCI_REG8(0x3f8d), 0x00 },
+	{ CCI_REG8(0x3ff4), 0x00 },
+	{ CCI_REG8(0x3ff5), 0x4c },
+	{ CCI_REG8(0x3ffc), 0x00 },
+	{ CCI_REG8(0x3ffd), 0x00 },
+	/* coarse integration time and gain defaults */
+	{ CCI_REG8(0x0202), 0x04 },
+	{ CCI_REG8(0x0203), 0xa4 },
+	{ CCI_REG8(0x0224), 0x01 },
+	{ CCI_REG8(0x0225), 0xf4 },
+	{ CCI_REG8(0x3fe0), 0x01 },
+	{ CCI_REG8(0x3fe1), 0xf4 },
+	{ CCI_REG8(0x0204), 0x00 },
+	{ CCI_REG8(0x0205), 0x70 },
+	{ CCI_REG8(0x0216), 0x00 },
+	{ CCI_REG8(0x0217), 0x70 },
+	{ CCI_REG8(0x0218), 0x01 },
+	{ CCI_REG8(0x0219), 0x00 },
+	{ CCI_REG8(0x020e), 0x01 },
+	{ CCI_REG8(0x020f), 0x00 },
+	{ CCI_REG8(0x0210), 0x01 },
+	{ CCI_REG8(0x0211), 0x00 },
+	{ CCI_REG8(0x0212), 0x01 },
+	{ CCI_REG8(0x0213), 0x00 },
+	{ CCI_REG8(0x0214), 0x01 },
+	{ CCI_REG8(0x0215), 0x00 },
+	{ CCI_REG8(0x3fe2), 0x00 },
+	{ CCI_REG8(0x3fe3), 0x70 },
+	{ CCI_REG8(0x3fe4), 0x01 },
+	{ CCI_REG8(0x3fe5), 0x00 },
+	{ CCI_REG8(0x3e20), 0x01 },
+	{ CCI_REG8(0x3e3b), 0x00 },
+	{ CCI_REG8(0x4034), 0x01 },
+	/* vendor image quality registers */
+	{ CCI_REG8(0x4035), 0xf0 },
+};
+	{
+		.width = 1920,
+		.height = 1080,
+		.crop = {
+			.left = 160,
+			.top = 832,
+			.width = 7680,
+			.height = 4320,
+		},
+		.pixel_rate = 864000000,
+		.line_length = 2912,
+		.frame_length_min = 1236,
+		/* 30 fps at this frame length; the mode reaches 240 fps */
+		.frame_length_def = 9889,
+		.exposure_def = 1188,
+		.link_freq_index = 1,
+		.regs = imx582_1920x1080_240_regs,
+		.num_regs = ARRAY_SIZE(imx582_1920x1080_240_regs),
 	},
 
 struct imx582_mode {
@@ -709,6 +1011,8 @@ struct imx582_mode {
 	u32 exposure_def;
 	const struct cci_reg_sequence *regs;
 	unsigned int num_regs;
+	/* Index into imx582_link_freq_menu, for this mode. */
+	u32 link_freq_index;
 };
 
 static const struct imx582_mode imx582_modes[] = {
@@ -766,8 +1070,47 @@ static const struct imx582_mode imx582_modes[] = {
 		.frame_length_min = 3658,
 		.frame_length_def = 3658,
 		.exposure_def = 3610,
+		.link_freq_index = 0,
 		.regs = imx582_4000x2256_regs,
 		.num_regs = ARRAY_SIZE(imx582_4000x2256_regs),
+	},
+	{
+		.width = 4000,
+		.height = 2256,
+		.crop = {
+			.left = 0,
+			.top = 744,
+			.width = 8000,
+			.height = 4512,
+		},
+		.pixel_rate = 705600000,
+		.line_length = 4592,
+		.frame_length_min = 2560,
+		/* 30 fps at this frame length; the mode reaches 60 fps */
+		.frame_length_def = 5120,
+		.exposure_def = 2512,
+		.link_freq_index = 1,
+		.regs = imx582_4000x2256_60_regs,
+		.num_regs = ARRAY_SIZE(imx582_4000x2256_60_regs),
+	},
+	{
+		.width = 1920,
+		.height = 1080,
+		.crop = {
+			.left = 160,
+			.top = 832,
+			.width = 7680,
+			.height = 4320,
+		},
+		.pixel_rate = 864000000,
+		.line_length = 2912,
+		.frame_length_min = 1236,
+		/* 30 fps at this frame length; the mode reaches 240 fps */
+		.frame_length_def = 9889,
+		.exposure_def = 1188,
+		.link_freq_index = 1,
+		.regs = imx582_1920x1080_240_regs,
+		.num_regs = ARRAY_SIZE(imx582_1920x1080_240_regs),
 	},
 };
 
@@ -783,6 +1126,7 @@ struct imx582 {
 	struct gpio_desc *reset_gpio;
 
 	struct v4l2_ctrl_handler ctrls;
+	struct v4l2_ctrl *link_freq;
 	struct v4l2_ctrl *pixel_rate;
 	struct v4l2_ctrl *hblank;
 	struct v4l2_ctrl *vblank;
@@ -994,6 +1338,7 @@ static int imx582_init_controls(struct imx582 *imx582)
 				      imx582_link_freq_menu);
 	if (ctrl)
 		ctrl->flags |= V4L2_CTRL_FLAG_READ_ONLY;
+	imx582->link_freq = ctrl;
 
 	imx582->pixel_rate = v4l2_ctrl_new_std(hdl, NULL, V4L2_CID_PIXEL_RATE,
 					       IMX582_PIXEL_RATE_MIN,
@@ -1065,6 +1410,10 @@ static int imx582_apply_mode(struct imx582 *imx582,
 	imx582->mode = mode;
 
 	ret = __v4l2_ctrl_s_ctrl_int64(imx582->pixel_rate, mode->pixel_rate);
+	if (ret)
+		return ret;
+
+	ret = __v4l2_ctrl_s_ctrl(imx582->link_freq, mode->link_freq_index);
 	if (ret)
 		return ret;
 
