@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config VIDEO_MTK_CAMSV
+	tristate "Mediatek CAMSV capture driver (MT6895 bring-up)"
+	depends on VIDEO_DEV && VIDEO_V4L2
+	depends on ARCH_MEDIATEK || COMPILE_TEST
+	depends on OF && IOMMU_SUPPORT
+	help
+	  Self-contained CAMSV1 capture driver for the MT6895 (Redmi K50, rubens)
+	  camera path: IMX582 -> CSI-2 port 2 -> SENINF -> CAM_MUX 3 -> camsv1 IMGO
+	  DMA -> V4L2 /dev/video0 (YUYV 422).  The driver programs the sensor over
+	  I2C itself, so no separate sensor or CSI-2 receiver driver is needed.
+
+	  This is bring-up quality code; the capture buffer is allocated from CMA
+	  and mapped through the display IOMMU.
+
+	  To compile this driver as a module, choose M here: the module will be
+	  called cam_cap.
