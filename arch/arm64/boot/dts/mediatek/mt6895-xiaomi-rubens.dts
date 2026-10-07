@@ -536,6 +536,84 @@
 			output-low;
 		};
 	};
+	/*
+	 * Fingerprint sensor (side-mounted).  Same SPI3_A pads as the rubens
+	 * FPC1540 part: CLK=GPIO217, CS=GPIO218, MI=GPIO219, MO=GPIO220.
+	 * rubens (K50) ships a Goodix gf_spi sensor; it powers from the
+	 * 3.3 V mt6368_vfp rail.
+	 */
+	fp_pins_default: fp-pins-default {
+		pins_clk {
+			pinmux = <PINMUX_GPIO217__FUNC_SPI3_A_CLK>;
+			drive-strength = <MTK_DRIVE_6mA>;
+			bias-disable;
+		};
+		pins_cs {
+			pinmux = <PINMUX_GPIO218__FUNC_SPI3_A_CSB>;
+			drive-strength = <MTK_DRIVE_6mA>;
+			bias-disable;
+		};
+		pins_mi {
+			pinmux = <PINMUX_GPIO219__FUNC_SPI3_A_MI>;
+			drive-strength = <MTK_DRIVE_6mA>;
+			bias-disable;
+			input-enable;
+		};
+		pins_mo {
+			pinmux = <PINMUX_GPIO220__FUNC_SPI3_A_MO>;
+			drive-strength = <MTK_DRIVE_6mA>;
+			bias-disable;
+		};
+	};
+
+	/* hardware reset line, GPIO216 (active low) */
+	fp_pins_reset: fp-pins-reset {
+		pins_reset {
+			pinmux = <PINMUX_GPIO216__FUNC_GPIO216>;
+			bias-disable;
+		};
+	};
+
+	/* finger-detect EINT, GPIO136 (pulled up, idle high) */
+	fp_pins_eint: fp-pins-eint {
+		pins_eint {
+			pinmux = <PINMUX_GPIO136__FUNC_GPIO136>;
+			bias-pull-up;
+			input-enable;
+			input-schmitt-enable;
+		};
+	};
+};
+
+&spi3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&fp_pins_default>;
+	status = "okay";
+
+	/*
+	 * Goodix gf_spi fingerprint sensor on SPI3_A (GPIO217-220), the wiring
+	 * the stock tree uses (spi3@11013000 / fingerprint@0).  The driver is a
+	 * raw transport bridge (/dev/goodix_fp) driven by the userspace trustlet
+	 * loader, so it owns the transport plus the three side resources:
+	 *   vdd        mt6368_vfp, the adjustable sensor rail (1.2-3.5 V)
+	 *   reset      GPIO216, active low
+	 *   finger irq GPIO136 EINT, rising edge (idle high, pull-up)
+	 */
+	goodix-fp@0 {
+		compatible = "goodix,gf-spi";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+		vdd-supply = <&mt6368_vfp>;
+		reset-gpios = <&pio 216 GPIO_ACTIVE_HIGH>;
+
+		interrupt-parent = <&pio>;
+		interrupts = <136 IRQ_TYPE_EDGE_RISING>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&fp_pins_reset>, <&fp_pins_eint>;
+
+		status = "okay";
+	};
 };
 
 &mt6368_vtp {
