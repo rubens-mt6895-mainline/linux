@@ -5837,6 +5837,22 @@ static const struct cam_sensor_mode *cam_mode_get(int idx)
 }
 
 /*
+ * Whether a mode's raw frame fits the capture buffer allocated at load time
+ * (frame_bytes follows exp_hsize/exp_vsize).  The table modes are not all the
+ * same size: loaded for 4000x2256 the buffer holds 13.6 MB, while the
+ * 4000x3000 preview mode needs 18 MB, and letting an application switch to it
+ * would have the CAMSV DMA write past the end of the buffer.  The binning
+ * factor does not matter here - the DMA always writes the raw frame.
+ */
+static bool cam_mode_fits(const struct cam_sensor_mode *m)
+{
+	unsigned long avail = cam_buf_size ? cam_buf_size : frame_bytes;
+	unsigned long need = (unsigned long)m->hsize * m->vsize * 3 / 2;
+
+	return need <= avail;
+}
+
+/*
  * Which mode produces w x h when the converter bins by "bin" (1 = one output
  * pixel per raw pixel, 2 = 2x2 average).  fps_x100 == 0 accepts any frame
  * rate, otherwise the closest wins, which is how VIDIOC_S_PARM chooses
@@ -5858,6 +5874,12 @@ static int cam_mode_match(unsigned int w, unsigned int h, unsigned int bin,
 
 		if (m->hsize / bin != w || m->vsize / bin != h)
 			continue;
+		if (!cam_mode_fits(m)) {
+			pr_info_ratelimited("mode: %s %ux%u does not fit the %lu byte buffer\n",
+					    m->name, m->hsize, m->vsize,
+					    cam_buf_size ? cam_buf_size : frame_bytes);
+			continue;
+		}
 		if (!fps_x100)
 			return i;
 
@@ -6035,6 +6057,13 @@ static int cam_mode_program(int idx)
 
 	if (!m)
 		return -EINVAL;
+	if (!cam_mode_fits(m)) {
+		pr_err("mode: '%s' %ux%u needs %lu raw bytes, the capture buffer holds %lu\n",
+		       m->name, m->hsize, m->vsize,
+		       (unsigned long)m->hsize * m->vsize * 3 / 2,
+		       cam_buf_size ? cam_buf_size : frame_bytes);
+		return -ENOSPC;
+	}
 	if (!cam_i2c_get())
 		return -ENODEV;
 
@@ -6274,6 +6303,8 @@ static int cam_vidioc_enum_framesizes(struct file *file, void *priv,
 		return -EINVAL;
 
 	for (i = 0; i < CAMCAP_IMX582_NMODES; i++) {
+		if (!cam_mode_fits(&cam_imx582_modes[i]))
+			continue;
 		for (b = 1; b <= 2; b++) {
 			unsigned int w = cam_imx582_modes[i].hsize / b;
 			unsigned int h = cam_imx582_modes[i].vsize / b;
@@ -6321,6 +6352,8 @@ static int cam_vidioc_enum_frameintervals(struct file *file, void *priv,
 		return -EINVAL;
 
 	for (i = 0; i < CAMCAP_IMX582_NMODES; i++) {
+		if (!cam_mode_fits(&cam_imx582_modes[i]))
+			continue;
 		for (b = 1; b <= 2; b++) {
 			unsigned int fps = cam_imx582_modes[i].fps_x100;
 			unsigned int g;
