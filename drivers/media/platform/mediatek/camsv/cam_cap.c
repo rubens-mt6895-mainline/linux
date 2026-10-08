@@ -2600,9 +2600,10 @@ static void cam_v4l2_info_timing(char *info, int *ip, size_t size)
 			       div_u64(vc->s_gov, n * 1000),
 			       afps / 100, afps % 100, n, vc->pipe_frames);
 		i += scnprintf(info + i, size - i,
-			       "dist         : clean(<32ms)=%u late(32-40ms)=%u slip(40-58ms)=%u lost(>=58ms)=%u\n",
+			       "dist         : clean(<1.15x)=%u late(1.15-1.6x)=%u slip(1.6-2.2x)=%u lost(>=2.2x)=%u  nom=%uus\n",
 			       vc->per_hist[0], vc->per_hist[1],
-			       vc->per_hist[2], vc->per_hist[3]);
+			       vc->per_hist[2], vc->per_hist[3],
+			       cam_mode_fps ? 100000000U / cam_mode_fps : 30500U);
 	}
 	*ip = i;
 }
@@ -5320,18 +5321,29 @@ static void cam_pipe_free(struct cam_v4l2_ctx *c)
  * the frames that slipped: the hardware finishes a frame about a millisecond
  * before the next one starts, so anything that delays the arm thread past that
  * window makes the next frame start late and costs part or all of a period.
- * `per` is nanoseconds and the buckets are absolute, assuming the nominal
- * period of the mode in use (VTS 3300 gives 30.2 ms): clean is a frame that
- * used the whole period, late started a couple of milliseconds into the next
- * one, slip is most of a period gone, lost is a whole period (60.4 ms) or more.
+ *
+ * `per` is nanoseconds and the buckets are *relative to the nominal period of
+ * the mode in use* (cam_mode_fps, set by cam_mode_geometry()).  They have to
+ * be: a 30 fps mode with the vendor VTS has a 33.3 ms period, so absolute
+ * buckets tuned for the 30.2 ms preview (VTS 3300) reported every single
+ * frame of a perfectly healthy 30 fps stream as "late".  Ratios instead:
+ *
+ *	clean	< 1.15 x nominal	scheduling jitter, the frame used its period
+ *	late	1.15 - 1.60 x		started a little into the next period
+ *	slip	1.60 - 2.20 x		most of a period gone
+ *	lost	>= 2.20 x		a whole period or more lost
  */
 static void cam_per_hist_add(struct cam_v4l2_ctx *c, u64 per)
 {
-	if (per < 32000000ULL)
+	/* 10 M / fps_x100 = period in microseconds (30500 us if not set yet) */
+	u64 nom = cam_mode_fps ? 100000000ULL / cam_mode_fps : 30500ULL;
+	u64 us = per / 1000ULL;
+
+	if (us * 100 < nom * 115)
 		c->per_hist[0]++;
-	else if (per < 40000000ULL)
+	else if (us * 100 < nom * 160)
 		c->per_hist[1]++;
-	else if (per < 58000000ULL)
+	else if (us * 100 < nom * 220)
 		c->per_hist[2]++;
 	else
 		c->per_hist[3]++;
