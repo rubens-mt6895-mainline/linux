@@ -3305,6 +3305,7 @@ static struct {
 	unsigned int	best_pos;
 	u32		best_metric;
 	u32		hold_metric;	/* metric of the position being held */
+	u32		hold_ref;	/* smoothed hold_metric: the no-motion baseline */
 	u32		metric_before;	/* hold_metric when the last scan started */
 	unsigned int	low;		/* consecutive low-metric frames */
 	unsigned int	stubborn;	/* consecutive scans that did not help */
@@ -3321,18 +3322,15 @@ static struct {
 } cam_af;
 
 /*
- * Focus metric, Q8: the mean |dY| over the sampled pixel pairs.  0 when the
- * converter sampled no rows.
+ * Focus metric, per mille: the summed |dY| over the summed gamma'd level of the
+ * sampled pixel pairs.  0 when the converter sampled no rows.
  *
- * This is deliberately *not* normalised by the mean luma.  Dividing by the
- * brightness looks attractive - the exposure sets the slope of the LUT, so the
- * raw mean moves when the AE moves (the same position read 547 and 742 in one
- * evening) - but the division quantises the number down to a handful of counts
- * (measured on the device: a flat 7..8 across the whole sweep, with the real
- * peak at 785 against 547 shoulders), which destroys exactly the contrast the
- * search is looking for.  What keeps the sweep comparable instead is the AE:
- * cam_af_scanning() freezes the exposure while the sweep runs, and the IDLE
- * branch of cam_af_step() waits for the AE to settle before it starts.
+ * The division is what makes one af_floor mean the same thing in a dim room and
+ * in daylight (the gamma table is steep near black, so an absolute difference
+ * is not comparable across light levels).  (An earlier revision used the raw
+ * sum times 256, which saturates with the luma clamp as soon as the frame is
+ * bright: the metric then collapses to 0 in a normally lit room, the search
+ * reads that as "flat" and re-scans forever.)
  */
 static u32 cam_af_metric(const struct cam_stats *st)
 {
@@ -3417,6 +3415,7 @@ static void cam_af_start(void)
 	cam_af.best_pos = cam_af_coarse_pos(0);
 	cam_af.idx = 0;
 	cam_af.low = 0;
+	cam_af.hold_ref = 0;		/* re-seed the no-motion baseline */
 	cam_af.wobble_period = CAMCAP_AF_WOBBLE_FRAMES;	/* new scan: watch closely */
 	cam_af.log_n = 0;
 	cam_af.scans++;
@@ -3451,6 +3450,7 @@ static void cam_af_wobble_start(void)
 	cam_af.best_pos = cam_af.wobble_base;
 	cam_af.idx = 0;
 	cam_af.log_n = 0;
+	cam_af.hold_ref = 0;		/* the lens moves: re-seed the baseline */
 	/*
 	 * Counted apart from scans: a wobble is not a search, and the first
 	 * report of this counter (scans=4 for 1 search + 3 wobbles) showed how
@@ -3515,10 +3515,27 @@ static void cam_af_step(const struct cam_stats *st)
 			 */
 			cam_af.hold_frames = 0;
 			cam_af.low = 0;
+			cam_af.hold_ref = 0;	/* re-seed when the scene returns */
 			cam_af.flat = true;
 			return;
 		}
 		cam_af.flat = false;
+		/*
+		 * No-motion baseline: a slow average of the metric at the
+		 * position being held.  The re-scan test below compares against
+		 * *this* rather than against the scan's best_metric, because
+		 * best_metric was measured at an older exposure and an older
+		 * scene: a metric that divides out the light level still moves a
+		 * little when the AE (or the flicker it fights) steps, and
+		 * against that stale absolute reference the dip reads as a
+		 * scene change -- which is what made the lens re-scan a scene
+		 * nobody had touched.  A real change is sustained, so it still
+		 * walks past the average and fires the test.
+		 */
+		if (!cam_af.hold_ref)
+			cam_af.hold_ref = m;
+		else
+			cam_af.hold_ref = (cam_af.hold_ref * 7u + m) / 8u;
 		if (cam_af.hold_frames < cam_af.wobble_period)
 			cam_af.hold_frames++;
 		if (cam_af.hold_frames >= cam_af.wobble_period &&
@@ -3548,7 +3565,7 @@ static void cam_af_step(const struct cam_stats *st)
 			}
 			return;
 		}
-		if (m * 100 < cam_af.best_metric * CAMCAP_AF_RESCAN_PCT) {
+		if (m * 100 < cam_af.hold_ref * CAMCAP_AF_RESCAN_PCT) {
 			if (++cam_af.low >= need) {
 				cam_af.low = 0;
 				cam_af_start();
@@ -3817,10 +3834,11 @@ static int cam_af_info(char *info, int i, size_t size)
 	 * search's own bookkeeping.
 	 */
 	i += scnprintf(info + i, size - i,
-		       "af           : %s state=%s pos=%u metric=%u y=%u best=%u best_pos=%u hold=%u floor=%u flat=%u low=%u stubborn=%u scans=%u wobbles=%u per=%u vcm=0x%02x%s\n",
+		       "af           : %s state=%s pos=%u metric=%u y=%u ref=%u best=%u best_pos=%u hold=%u floor=%u flat=%u low=%u stubborn=%u scans=%u wobbles=%u per=%u vcm=0x%02x%s\n",
 		       !af_enable ? "off" : (af_auto ? "auto" : "manual"),
 		       cam_af_state_name(cam_af.state), cam_vcm_pos,
 		       cam_af_metric(&cam_stats), cam_af_luma(&cam_stats),
+		       cam_af.hold_ref,
 		       cam_af.best_metric, cam_af.best_pos, cam_af.hold_metric,
 		       af_floor, cam_af.flat, cam_af.low, cam_af.stubborn,
 		       cam_af.scans, cam_af.wobbles, cam_af.wobble_period,
