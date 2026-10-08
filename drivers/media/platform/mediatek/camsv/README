@@ -100,12 +100,15 @@ pair (Q8).  It is not normalised against scene brightness, so it carries no
 information when the scene has no contrast - a quiet dark frame reads 0..2
 while a normal room reads several hundred.  Two parameters keep that case from
 moving the lens: af_floor (default 200) is the value below which a sample is
-recorded but cannot win a comparison, and af_fallback (default 0, the
-mechanical rest position) is where the lens is parked when a scan finds no
-contrast at all and no previous position is known.  A scan that ends without a
-usable sample puts the lens back where it started and logs
+recorded but cannot win a comparison, and af_fallback (default 512, the middle
+of the DAC range) is where the lens is parked when a scan finds no contrast at
+all and no previous position is known.  The mechanical rest (0) is deliberately
+not used: it focuses this module at macro distance, about 0.4 m, which is the
+wrong end for a phone camera.  A scan that ends without a usable sample puts the
+lens back where it started and logs
 ``cam_af: scan N found no contrast``; below the floor the hold branch neither
-wobbles nor rescans quickly (CAMCAP_AF_FLAT_FRAMES, about 10 s), and the wobble
+wobbles nor rescans at all - it stays where it is until the scene gives the
+metric something to compare, and only then starts a fresh scan.  The wobble
 requires the same floor.  With af_floor=0 the old behaviour returns.
 
 The lens is driven from the capture path, so /proc/camcap's focus line only

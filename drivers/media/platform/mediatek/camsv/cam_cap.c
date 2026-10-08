@@ -3077,11 +3077,14 @@ MODULE_PARM_DESC(af_floor, "focus metric below which a sample carries no informa
 
 /*
  * Where to leave the lens when a scan finds no evidence and there is no
- * previous position to restore (the first scan after a stream starts).
+ * previous position to restore (the first scan after a stream starts).  The
+ * default is the middle of the DAC range: the mechanical rest (0) focuses the
+ * module at macro distance, which is the wrong end for a phone camera, and the
+ * middle is the position the metric preferred in our dim-room sweeps.
  */
-static unsigned int af_fallback;
+static unsigned int af_fallback = 512;
 module_param(af_fallback, uint, 0644);
-MODULE_PARM_DESC(af_fallback, "VCM position to rest at when a scan finds no contrast (default 0 = mechanical rest)");
+MODULE_PARM_DESC(af_fallback, "VCM position for a scan that finds no contrast when there is no previous position (default 512 = middle of the range)");
 
 /* One register address followed by n data bytes, in a single transfer. */
 static int cam_vcm_write(unsigned int reg, const u8 *data, unsigned int n)
@@ -3345,7 +3348,8 @@ static void cam_af_start(void)
 		cam_af.coarse_n = ARRAY_SIZE(cam_af.log_pos);
 	cam_af.metric_before = cam_af.hold_metric;
 	/* where to put the lens back if this scan finds nothing measurable */
-	cam_af.hold_pos = cam_vcm_ready ? cam_vcm_pos : af_fallback;
+	cam_af.hold_pos = (cam_vcm_ready && cam_vcm_pos <= af_max) ?
+			  cam_vcm_pos : af_fallback;
 	cam_af.flat = false;
 	cam_af.best_metric = 0;
 	cam_af.best_pos = cam_af_coarse_pos(0);
@@ -3436,13 +3440,14 @@ static void cam_af_step(const struct cam_stats *st)
 			/*
 			 * Nothing measurable in this frame (dark or flat
 			 * scene): do not wobble -- a flat scene would walk the
-			 * lens on noise -- and re-scan only slowly.
+			 * lens on noise -- and do not keep searching either.
+			 * Stay where the last scan left the lens until the
+			 * scene gives the metric something to bite on; the
+			 * branch below starts a scan again then.
 			 */
 			cam_af.hold_frames = 0;
-			if (++cam_af.low >= CAMCAP_AF_FLAT_FRAMES) {
-				cam_af.low = 0;
-				cam_af_start();
-			}
+			cam_af.low = 0;
+			cam_af.flat = true;
 			return;
 		}
 		cam_af.flat = false;
@@ -6053,6 +6058,16 @@ static int cam_vidioc_try_fmt(struct file *file, void *priv,
 {
 	struct v4l2_pix_format *pix = &f->fmt.pix;
 
+	/*
+	 * Refuse a field this capture path does not do.  GStreamer probes every
+	 * size with V4L2_FIELD_ALTERNATE and, when that probe is answered with
+	 * V4L2_FIELD_NONE, advertises an extra interlace-mode=alternate caps
+	 * entry for the same size.  Camera applications then show the same
+	 * resolution twice.
+	 */
+	if (pix->field != V4L2_FIELD_ANY && pix->field != V4L2_FIELD_NONE)
+		return -EINVAL;
+
 	pix->pixelformat = V4L2_PIX_FMT_YUYV;
 	if (pix->width && pix->height &&
 	    (cam_mode_match(pix->width, pix->height, 1, 0) >= 0 ||
@@ -6090,6 +6105,10 @@ static int cam_vidioc_s_fmt(struct file *file, void *priv,
 		return -EBUSY;
 
 	if (pix->pixelformat && pix->pixelformat != V4L2_PIX_FMT_YUYV)
+		return -EINVAL;
+
+	/* see cam_vidioc_try_fmt() about the field */
+	if (pix->field != V4L2_FIELD_ANY && pix->field != V4L2_FIELD_NONE)
 		return -EINVAL;
 
 	/* the current binning first, then the other one */
