@@ -3063,6 +3063,26 @@ static bool af_trace = true;
 module_param(af_trace, bool, 0644);
 MODULE_PARM_DESC(af_trace, "log every autofocus measurement (default 1)");
 
+/*
+ * The search only moves the lens on evidence.  A frame whose focus metric is
+ * below this floor is still logged, but it can never win a comparison: in a
+ * dark or textureless scene every sample lands there, so a scan that finds
+ * nothing puts the lens back where it found it instead of parking it on
+ * whichever sample noise favoured.  A lit room reads several hundred, a flat
+ * dark frame 0..2.  Set to 0 to trust every sample (the old behaviour).
+ */
+static unsigned int af_floor = 200;
+module_param(af_floor, uint, 0644);
+MODULE_PARM_DESC(af_floor, "focus metric below which a sample carries no information (default 200, 0 = trust every sample)");
+
+/*
+ * Where to leave the lens when a scan finds no evidence and there is no
+ * previous position to restore (the first scan after a stream starts).
+ */
+static unsigned int af_fallback;
+module_param(af_fallback, uint, 0644);
+MODULE_PARM_DESC(af_fallback, "VCM position to rest at when a scan finds no contrast (default 0 = mechanical rest)");
+
 /* One register address followed by n data bytes, in a single transfer. */
 static int cam_vcm_write(unsigned int reg, const u8 *data, unsigned int n)
 {
@@ -3203,6 +3223,7 @@ fail:
 #define CAMCAP_AF_WOBBLE_STEP	64
 #define CAMCAP_AF_WOBBLE_POINTS	3
 #define CAMCAP_AF_WOBBLE_GAIN_PCT 101	/* move only if >1% better */
+#define CAMCAP_AF_FLAT_FRAMES	300	/* ~10 s before re-trying in a flat scene */
 
 enum cam_af_state {
 	CAM_AF_IDLE = 0,
@@ -3245,7 +3266,9 @@ static struct {
 	unsigned int	stubborn;	/* consecutive scans that did not help */
 	unsigned int	scans;
 	unsigned int	hold_frames;	/* frames since the search last parked */
+	unsigned int	hold_pos;	/* where the lens was when a scan started */
 	unsigned int	wobble_base;	/* position held when a wobble started */
+	bool		flat;		/* last scan found no measurable point */
 	unsigned int	log_n;
 	u32		log_pos[32];
 	u32		log_metric[32];
@@ -3321,6 +3344,9 @@ static void cam_af_start(void)
 	if (cam_af.coarse_n > ARRAY_SIZE(cam_af.log_pos))
 		cam_af.coarse_n = ARRAY_SIZE(cam_af.log_pos);
 	cam_af.metric_before = cam_af.hold_metric;
+	/* where to put the lens back if this scan finds nothing measurable */
+	cam_af.hold_pos = cam_vcm_ready ? cam_vcm_pos : af_fallback;
+	cam_af.flat = false;
 	cam_af.best_metric = 0;
 	cam_af.best_pos = cam_af_coarse_pos(0);
 	cam_af.idx = 0;
@@ -3406,6 +3432,20 @@ static void cam_af_step(const struct cam_stats *st)
 
 	if (cam_af.state == CAM_AF_HOLD) {
 		cam_af.hold_metric = m;
+		if (m < af_floor) {
+			/*
+			 * Nothing measurable in this frame (dark or flat
+			 * scene): do not wobble -- a flat scene would walk the
+			 * lens on noise -- and re-scan only slowly.
+			 */
+			cam_af.hold_frames = 0;
+			if (++cam_af.low >= CAMCAP_AF_FLAT_FRAMES) {
+				cam_af.low = 0;
+				cam_af_start();
+			}
+			return;
+		}
+		cam_af.flat = false;
 		if (cam_af.hold_frames < CAMCAP_AF_WOBBLE_FRAMES)
 			cam_af.hold_frames++;
 		if (cam_af.hold_frames >= CAMCAP_AF_WOBBLE_FRAMES &&
@@ -3416,8 +3456,18 @@ static void cam_af_step(const struct cam_stats *st)
 		}
 		need = CAMCAP_AF_RESCAN_FRAMES <<
 		       (cam_af.stubborn < 3 ? cam_af.stubborn : 3);
-		if (cam_af.best_metric &&
-		    m * 100 < cam_af.best_metric * CAMCAP_AF_RESCAN_PCT) {
+		if (!cam_af.best_metric) {
+			/*
+			 * There is contrast again, but the last scan found no
+			 * winner to hold: take a fresh look.
+			 */
+			if (++cam_af.low >= CAMCAP_AF_RESCAN_FRAMES) {
+				cam_af.low = 0;
+				cam_af_start();
+			}
+			return;
+		}
+		if (m * 100 < cam_af.best_metric * CAMCAP_AF_RESCAN_PCT) {
 			if (++cam_af.low >= need) {
 				cam_af.low = 0;
 				cam_af_start();
@@ -3449,7 +3499,7 @@ static void cam_af_step(const struct cam_stats *st)
 			cam_af_state_name(cam_af.state), cam_af.pos, m,
 			cam_af.best_metric, cam_af.best_pos);
 
-	if (m > cam_af.best_metric) {
+	if (m >= af_floor && m > cam_af.best_metric) {
 		cam_af.best_metric = m;
 		cam_af.best_pos = cam_af.pos;
 	}
@@ -3462,7 +3512,8 @@ static void cam_af_step(const struct cam_stats *st)
 		}
 		cam_af.state = CAM_AF_HOLD;
 		cam_af.hold_frames = 0;
-		if (cam_af.best_metric * 100 >=
+		if (cam_af.best_metric >= af_floor &&
+		    cam_af.best_metric * 100 >=
 		    cam_af.metric_before * CAMCAP_AF_WOBBLE_GAIN_PCT) {
 			cam_af.hold_metric = cam_af.best_metric;
 			cam_vcm_set(cam_af.best_pos);
@@ -3516,12 +3567,29 @@ static void cam_af_step(const struct cam_stats *st)
 	/* done: park on the winner and start watching for a scene change */
 	cam_af.state = CAM_AF_HOLD;
 	cam_af.hold_frames = 0;
+	cam_af.low = 0;
+	if (cam_af.best_metric < af_floor) {
+		/*
+		 * No position produced a metric worth acting on (dark or
+		 * textureless scene).  Put the lens back where this scan found
+		 * it -- or on the configured fallback -- instead of parking it
+		 * on whichever sample noise happened to favour.
+		 */
+		cam_af.flat = true;
+		cam_af.best_metric = 0;
+		cam_af.best_pos = cam_af.hold_pos;
+		cam_af.hold_metric = m;
+		cam_vcm_set(cam_af.hold_pos);
+		pr_info("cam_af: scan %u found no contrast (metric %u < %u), lens back to %u\n",
+			cam_af.scans, m, af_floor, cam_af.hold_pos);
+		return;
+	}
 	if (cam_af.metric_before * 110 < cam_af.best_metric * 100)
 		cam_af.stubborn = 0;
 	else if (cam_af.stubborn < 3)
 		cam_af.stubborn++;
-	cam_af.low = 0;
 	cam_af.hold_metric = cam_af.best_metric;
+	cam_af.hold_pos = cam_af.best_pos;
 	cam_vcm_set(cam_af.best_pos);
 	pr_info("cam_af: scan %u done, pos=%u metric=%u (was %u), stubborn=%u\n",
 		cam_af.scans, cam_af.best_pos, cam_af.best_metric,
@@ -3541,6 +3609,8 @@ static void cam_af_reset(void)
 	cam_af.n = 0;
 	cam_af.skip = 0;
 	cam_af.hold_frames = 0;
+	cam_af.hold_pos = 0;
+	cam_af.flat = false;
 }
 
 /*
@@ -3654,12 +3724,13 @@ static int cam_af_info(char *info, int i, size_t size)
 	 * search's own bookkeeping.
 	 */
 	i += scnprintf(info + i, size - i,
-		       "af           : %s state=%s pos=%u metric=%u y=%u best=%u best_pos=%u hold=%u low=%u stubborn=%u scans=%u vcm=0x%02x%s\n",
+		       "af           : %s state=%s pos=%u metric=%u y=%u best=%u best_pos=%u hold=%u floor=%u flat=%u low=%u stubborn=%u scans=%u vcm=0x%02x%s\n",
 		       !af_enable ? "off" : (af_auto ? "auto" : "manual"),
 		       cam_af_state_name(cam_af.state), cam_vcm_pos,
 		       cam_af_metric(&cam_stats), cam_af_luma(&cam_stats),
 		       cam_af.best_metric, cam_af.best_pos, cam_af.hold_metric,
-		       cam_af.low, cam_af.stubborn, cam_af.scans, vcm_addr,
+		       af_floor, cam_af.flat, cam_af.low, cam_af.stubborn,
+		       cam_af.scans, vcm_addr,
 		       cam_vcm_ready ? " ready" : " (not ready)");
 	return i;
 }

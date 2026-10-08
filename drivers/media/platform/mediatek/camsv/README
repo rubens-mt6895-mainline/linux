@@ -86,8 +86,31 @@ Useful parameters: v4l2_bin (1 = full size output, 2 = 2x2 binned),
 v4l2_full_cache, exp_hsize/exp_vsize/v4l2_src_stride, exp_max, out_width/
 out_height, rb_swap, pipeline, pipe_slots, conv_threads, sync_parallel,
 route_intf/route_mux/cammux/dphy_base/seninf_base, i2c_bus/i2c_addr, rx_rate,
-mode_trace, mode_init_replay, ae_enable/awb_enable/af_enable.  See the module's
-MODULE_PARM_DESC strings.
+mode_trace, mode_init_replay, ae_enable/awb_enable/af_enable,
+af_floor/af_fallback.  See the module's MODULE_PARM_DESC strings.
+
+Autofocus
+---------
+
+The DW9800V voice-coil motor is on the same I2C bus as the sensor (address
+0x0c).  Focus is open loop: a contrast search walks the 10-bit DAC over
+coarse->fine->hold and tracks the result with a slow wobble.  The metric is the
+mean absolute luma difference between the two pixels of every sampled output
+pair (Q8).  It is not normalised against scene brightness, so it carries no
+information when the scene has no contrast - a quiet dark frame reads 0..2
+while a normal room reads several hundred.  Two parameters keep that case from
+moving the lens: af_floor (default 200) is the value below which a sample is
+recorded but cannot win a comparison, and af_fallback (default 0, the
+mechanical rest position) is where the lens is parked when a scan finds no
+contrast at all and no previous position is known.  A scan that ends without a
+usable sample puts the lens back where it started and logs
+``cam_af: scan N found no contrast``; below the floor the hold branch neither
+wobbles nor rescans quickly (CAMCAP_AF_FLAT_FRAMES, about 10 s), and the wobble
+requires the same floor.  With af_floor=0 the old behaviour returns.
+
+The lens is driven from the capture path, so /proc/camcap's focus line only
+updates while frames are streaming.  Focus is also reachable from V4L2 through
+V4L2_CID_FOCUS_ABSOLUTE and V4L2_CID_FOCUS_AUTO.
 
 Reproducible builds
 -------------------
