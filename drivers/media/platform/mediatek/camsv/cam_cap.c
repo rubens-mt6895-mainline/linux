@@ -1107,6 +1107,7 @@ static unsigned int cam_lut_ver;
 static const char *cam_ae_state(void);
 static int cam_af_cmd(const char *line);
 static int cam_af_info(char *info, int i, size_t size);
+static void cam_vcm_park(void);
 
 /* live mirrors of the two auto controls, so /proc can report them */
 static bool cam_ae_auto = true;
@@ -1993,6 +1994,14 @@ static ssize_t camcap_write(struct file *file, const char __user *ubuf,
 		ret = cam_cap_cmd_stop();
 	} else if (!strcmp(line, "regs")) {
 		cam_cap_dump_regs();
+		ret = 0;
+	} else if (!strcmp(line, "park")) {
+		/*
+		 * Park the lens on demand - the vendor does this when the camera
+		 * powers off, and the ramp is also the easiest way to prove the
+		 * actuator still answers after a long idle.
+		 */
+		cam_vcm_park();
 		ret = 0;
 	} else if (str_has_prefix(line, "af") &&
 		   (line[2] == '\0' || line[2] == ' ')) {
@@ -3071,9 +3080,9 @@ MODULE_PARM_DESC(af_trace, "log every autofocus measurement (default 1)");
  * whichever sample noise favoured.  A lit room reads several hundred, a flat
  * dark frame 0..2.  Set to 0 to trust every sample (the old behaviour).
  */
-static unsigned int af_floor = 200;
+static unsigned int af_floor = 20;
 module_param(af_floor, uint, 0644);
-MODULE_PARM_DESC(af_floor, "focus metric below which a sample carries no information (default 200, 0 = trust every sample)");
+MODULE_PARM_DESC(af_floor, "focus metric below which a sample carries no information, in contrast per mille (default 20, 0 = trust every sample)");
 
 /*
  * Where to leave the lens when a scan finds no evidence and there is no
@@ -3199,15 +3208,42 @@ fail:
 }
 
 /*
+ * Park the lens the way the vendor driver does on power-off: ramp the DAC down
+ * in steps of 16 with ~9 ms between them instead of writing zero in one go.
+ * The stock dw9800v_power_off() does exactly this (usleep_range(8400, 9400)
+ * per step) to avoid the audible click and the mechanical shock of a hard
+ * zero; the ramp ends at 0, which is the infinity end of the travel.  Only
+ * done when we are torn down, so a running camera never sees it.
+ */
+static void cam_vcm_park(void)
+{
+	unsigned int pos;
+
+	if (!cam_vcm_ready || !vcm_enable || !cam_i2c_adap)
+		return;
+
+	for (pos = cam_vcm_pos & ~0xfu; pos; pos -= 16) {
+		u8 d[2] = { (u8)((pos >> 8) & 0x03), (u8)(pos & 0xff) };
+
+		if (cam_vcm_write(0x03, d, 2))
+			break;
+		usleep_range(8400, 9400);
+	}
+	cam_vcm_pos = 0;
+	pr_info("cam_cap: VCM parked at 0 (infinity end)\n");
+}
+
+/*
  * The search is a coarse sweep followed by two refinement rounds.  Each position
  * costs SKIP + SAMPLES frames: the first frame after a move is discarded because
  * the DAC and the AAC ramp are still on their way, and two measured frames are
  * averaged so that sensor noise cannot pick the winner.
  */
+#define CAMCAP_AF_MIN_LEVEL	6	/* mean gamma level below which a frame is "nothing to see" */
 #define CAMCAP_AF_SAMPLES	2
 #define CAMCAP_AF_SKIP		1
 #define CAMCAP_AF_ROUNDS	2
-#define CAMCAP_AF_RESCAN_FRAMES	12	/* low frames before a re-scan */
+#define CAMCAP_AF_RESCAN_FRAMES	30	/* low frames before a re-scan (~1 s) */
 #define CAMCAP_AF_RESCAN_PCT	70	/* ...and this is what "low" means */
 
 /*
@@ -3220,12 +3256,17 @@ fail:
  * fraction of a percent.  So every CAMCAP_AF_WOBBLE_FRAMES frames the search
  * re-measures the held position and one step either side of it, and walks if
  * one of them wins by more than WOBBLE_GAIN_PCT.  The margin is what keeps
- * sensor noise from walking the lens in a flat scene.
+ * sensor noise from walking the lens in a flat scene.  Every wobble that ends
+ * up holding the position doubles the interval (up to WOBBLE_MAX), because a
+ * scene that keeps answering "still the same" is a scene the user is watching
+ * and does not want to see breathe; any real move, and any fresh scan, puts the
+ * interval back to WOBBLE_FRAMES.
  */
 #define CAMCAP_AF_WOBBLE_FRAMES	240	/* ~8 s at 30 fps */
 #define CAMCAP_AF_WOBBLE_STEP	64
 #define CAMCAP_AF_WOBBLE_POINTS	3
 #define CAMCAP_AF_WOBBLE_GAIN_PCT 101	/* move only if >1% better */
+#define CAMCAP_AF_WOBBLE_MAX	3000	/* ~100 s: ask a static scene less often */
 #define CAMCAP_AF_FLAT_FRAMES	300	/* ~10 s before re-trying in a flat scene */
 
 enum cam_af_state {
@@ -3267,8 +3308,10 @@ static struct {
 	u32		metric_before;	/* hold_metric when the last scan started */
 	unsigned int	low;		/* consecutive low-metric frames */
 	unsigned int	stubborn;	/* consecutive scans that did not help */
-	unsigned int	scans;
+	unsigned int	scans;		/* full sweeps started */
+	unsigned int	wobbles;	/* tracking wobbles started */
 	unsigned int	hold_frames;	/* frames since the search last parked */
+	unsigned int	wobble_period;	/* frames between wobbles (backs off) */
 	unsigned int	hold_pos;	/* where the lens was when a scan started */
 	unsigned int	wobble_base;	/* position held when a wobble started */
 	bool		flat;		/* last scan found no measurable point */
@@ -3293,9 +3336,28 @@ static struct {
  */
 static u32 cam_af_metric(const struct cam_stats *st)
 {
-	if (!st->fv_n)
+	u64 level;
+
+	if (!st->fv_n || !st->fv_y)
 		return 0;
-	return (u32)((st->fv * 256) / st->fv_n);
+	/*
+	 * Contrast per mille: summed |dY| over the summed level.  Dividing is
+	 * what makes one af_floor mean the same thing in a dim room and in
+	 * daylight (the gamma table is steep near black, so the absolute
+	 * difference is not comparable across light levels), and it is what
+	 * stops the AE -- and the flicker it fights -- from looking like a
+	 * scene change: an exposure step scales both sums, so their ratio
+	 * stays put.
+	 *
+	 * A frame that is essentially black is the one case where the ratio
+	 * lies: a handful of gamma'd counts of sensor noise over a level of
+	 * two is a huge ratio and no texture at all.  Report that as "no
+	 * information" instead.
+	 */
+	level = st->fv_y / (2 * st->fv_n);	/* mean gamma'd green, 0..255 */
+	if (level < CAMCAP_AF_MIN_LEVEL)
+		return 0;
+	return (u32)((st->fv * 1000) / st->fv_y);
 }
 
 /*
@@ -3355,6 +3417,7 @@ static void cam_af_start(void)
 	cam_af.best_pos = cam_af_coarse_pos(0);
 	cam_af.idx = 0;
 	cam_af.low = 0;
+	cam_af.wobble_period = CAMCAP_AF_WOBBLE_FRAMES;	/* new scan: watch closely */
 	cam_af.log_n = 0;
 	cam_af.scans++;
 	cam_af.state = CAM_AF_COARSE;
@@ -3388,7 +3451,12 @@ static void cam_af_wobble_start(void)
 	cam_af.best_pos = cam_af.wobble_base;
 	cam_af.idx = 0;
 	cam_af.log_n = 0;
-	cam_af.scans++;
+	/*
+	 * Counted apart from scans: a wobble is not a search, and the first
+	 * report of this counter (scans=4 for 1 search + 3 wobbles) showed how
+	 * easy it is to read the wrong number into a regression.
+	 */
+	cam_af.wobbles++;
 	cam_af.state = CAM_AF_WOBBLE;
 	cam_af_point(cam_af_wobble_pos(0));
 }
@@ -3451,10 +3519,18 @@ static void cam_af_step(const struct cam_stats *st)
 			return;
 		}
 		cam_af.flat = false;
-		if (cam_af.hold_frames < CAMCAP_AF_WOBBLE_FRAMES)
+		if (cam_af.hold_frames < cam_af.wobble_period)
 			cam_af.hold_frames++;
-		if (cam_af.hold_frames >= CAMCAP_AF_WOBBLE_FRAMES &&
+		if (cam_af.hold_frames >= cam_af.wobble_period &&
 		    cam_af.best_metric) {
+			/*
+			 * Not while the exposure is still moving: a wobble
+			 * measured across an AE step compares two different
+			 * pictures.  Leave hold_frames where it is, so the
+			 * wobble happens as soon as the AE lands.
+			 */
+			if (cam_ae_auto && cam_ae_settle)
+				return;
 			cam_af.hold_frames = 0;
 			cam_af_wobble_start();
 			return;
@@ -3521,6 +3597,7 @@ static void cam_af_step(const struct cam_stats *st)
 		    cam_af.best_metric * 100 >=
 		    cam_af.metric_before * CAMCAP_AF_WOBBLE_GAIN_PCT) {
 			cam_af.hold_metric = cam_af.best_metric;
+			cam_af.wobble_period = CAMCAP_AF_WOBBLE_FRAMES;
 			cam_vcm_set(cam_af.best_pos);
 			pr_info("cam_af: wobble -> pos=%u metric=%u (was %u @ %u)\n",
 				cam_af.best_pos, cam_af.best_metric,
@@ -3532,11 +3609,19 @@ static void cam_af_step(const struct cam_stats *st)
 			cam_af.best_pos = cam_af.wobble_base;
 			cam_af.best_metric = cam_af.metric_before;
 			cam_af.hold_metric = cam_af.metric_before;
+			/*
+			 * The scene did not move: this wobble cost the user a
+			 * visible breather and bought nothing, so back off.
+			 */
+			cam_af.wobble_period *= 2;
+			if (cam_af.wobble_period > CAMCAP_AF_WOBBLE_MAX)
+				cam_af.wobble_period = CAMCAP_AF_WOBBLE_MAX;
 			cam_vcm_set(cam_af.wobble_base);
 			if (af_trace)
-				pr_info("cam_af: wobble held pos=%u metric=%u (best %u @ %u)\n",
+				pr_info("cam_af: wobble held pos=%u metric=%u (best %u @ %u), next in %u frames\n",
 					cam_af.wobble_base,
-					cam_af.metric_before, won, won_pos);
+					cam_af.metric_before, won, won_pos,
+					cam_af.wobble_period);
 		}
 		return;
 	}
@@ -3606,6 +3691,7 @@ static void cam_af_reset(void)
 {
 	cam_af.state = CAM_AF_IDLE;
 	cam_af.scans = 0;
+	cam_af.wobbles = 0;
 	cam_af.low = 0;
 	cam_af.stubborn = 0;
 	cam_af.best_metric = 0;
@@ -3614,6 +3700,7 @@ static void cam_af_reset(void)
 	cam_af.n = 0;
 	cam_af.skip = 0;
 	cam_af.hold_frames = 0;
+	cam_af.wobble_period = CAMCAP_AF_WOBBLE_FRAMES;
 	cam_af.hold_pos = 0;
 	cam_af.flat = false;
 }
@@ -3642,12 +3729,13 @@ static int cam_af_cmd(const char *line)
 		a++;
 
 	if (!*a || !strcmp(a, "show")) {
-		pr_info("cam_cap: af %s (%s) state=%s pos=%u best=%u metric=%u hold=%u low=%u stubborn=%u scans=%u vcm@0x%02x\n",
+		pr_info("cam_cap: af %s (%s) state=%s pos=%u best=%u metric=%u hold=%u low=%u stubborn=%u scans=%u wobbles=%u vcm@0x%02x\n",
 			af_enable ? (af_auto ? "auto" : "manual") : "off",
 			cam_vcm_ready ? "vcm ready" : "vcm idle",
 			cam_af_state_name(cam_af.state), cam_vcm_pos,
 			cam_af.best_pos, cam_af.best_metric, cam_af.hold_metric,
-			cam_af.low, cam_af.stubborn, cam_af.scans, vcm_addr);
+			cam_af.low, cam_af.stubborn, cam_af.scans,
+			cam_af.wobbles, vcm_addr);
 		return 0;
 	}
 	if (!strcmp(a, "on") || !strcmp(a, "auto")) {
@@ -3729,14 +3817,14 @@ static int cam_af_info(char *info, int i, size_t size)
 	 * search's own bookkeeping.
 	 */
 	i += scnprintf(info + i, size - i,
-		       "af           : %s state=%s pos=%u metric=%u y=%u best=%u best_pos=%u hold=%u floor=%u flat=%u low=%u stubborn=%u scans=%u vcm=0x%02x%s\n",
+		       "af           : %s state=%s pos=%u metric=%u y=%u best=%u best_pos=%u hold=%u floor=%u flat=%u low=%u stubborn=%u scans=%u wobbles=%u per=%u vcm=0x%02x%s\n",
 		       !af_enable ? "off" : (af_auto ? "auto" : "manual"),
 		       cam_af_state_name(cam_af.state), cam_vcm_pos,
 		       cam_af_metric(&cam_stats), cam_af_luma(&cam_stats),
 		       cam_af.best_metric, cam_af.best_pos, cam_af.hold_metric,
 		       af_floor, cam_af.flat, cam_af.low, cam_af.stubborn,
-		       cam_af.scans, vcm_addr,
-		       cam_vcm_ready ? " ready" : " (not ready)");
+		       cam_af.scans, cam_af.wobbles, cam_af.wobble_period,
+		       vcm_addr, cam_vcm_ready ? " ready" : " (not ready)");
 	return i;
 }
 
@@ -4162,18 +4250,19 @@ static inline void cam_yuyv_pair(u8 *q, u32 r0, u32 g0, u32 b0,
 }
 
 /*
- * Grey-world luma of one raw tap triple, 0..255, for the focus metric.  The
- * metric is only ever compared between frames of the same mode, and this is
- * monotone in the LUT'd luma, so it orders lens positions the same way without
- * a second pair of table lookups.
+ * One sample of the focus metric: a green tap through the same gamma table the
+ * output path uses, so 0..255 and monotone in scene brightness.
+ *
+ * The metric used to be a linear grey-world luma, which saturated at 255: in a
+ * normally lit room every tap is already above 255 in raw units, so every
+ * sample clamped to 255, the metric collapsed to 0 and the search declared the
+ * scene flat.  That is exactly why a bright, low-texture scene never focused.
+ * Green is also the tap white balance never scales, so the metric does not move
+ * when the AWB does.
  */
-static inline int cam_luma8(u32 r, u32 g, u32 b)
+static inline int cam_metric_px(u32 g)
 {
-	const int ya = rb_swap ? 29 : 77;
-	const int yb = rb_swap ? 77 : 29;
-
-	return cam_clamp_int((ya * (int)r + 150 * (int)g + yb * (int)b) >> 8,
-			     0, 255);
+	return cam_lut_g[g > 4095 ? 4095 : g];
 }
 
 /*
@@ -4282,8 +4371,8 @@ static void cam_v4l2_convert_full_ref(const u8 *src, u8 *dst, unsigned int first
 
 			/* focus metric: |dY| between the two output pixels */
 			{
-				int c0 = cam_luma8(r0, g0, b0);
-				int c1 = cam_luma8(r1, g1, b1);
+				int c0 = cam_metric_px(g0);
+				int c1 = cam_metric_px(g1);
 
 				fv += (u32)(c0 > c1 ? c0 - c1 : c1 - c0);
 				fv_y += (u64)c0 + (u64)c1;
@@ -4465,8 +4554,8 @@ static void cam_v4l2_convert_full_fast(const u8 *src, u8 *dst,
 
 			/* focus metric: |dY| between the two output pixels */
 			{
-				int c0 = cam_luma8(r0, g0, b0);
-				int c1 = cam_luma8(r1, g1, b1);
+				int c0 = cam_metric_px(g0);
+				int c1 = cam_metric_px(g1);
 
 				fv += (u32)(c0 > c1 ? c0 - c1 : c1 - c0);
 				fv_y += (u64)c0 + (u64)c1;
@@ -4620,8 +4709,8 @@ static void cam_v4l2_convert_band(const u8 *src, u8 *dst, unsigned int first,
 
 				/* focus metric: |dY| between the two output pixels */
 				{
-					int c0 = cam_clamp_int(ly0, 0, 255);
-					int c1 = cam_clamp_int(ly1, 0, 255);
+					int c0 = g0;
+					int c1 = g1;
 
 					fv += (u32)(c0 > c1 ? c0 - c1 : c1 - c0);
 					fv_y += (u64)c0 + (u64)c1;
@@ -7160,6 +7249,9 @@ static void __exit cam_cap_exit(void)
 	/* 2. stop the video frames before tearing anything down */
 	if (cam_base)
 		cam_cap_vf_off();
+
+	/* 2a. park the lens (16 counts per step, ~9 ms each) while I2C is up */
+	cam_vcm_park();
 
 	/* 2b. release the sensor I2C adapter taken by the AE loop */
 	if (cam_i2c_adap) {

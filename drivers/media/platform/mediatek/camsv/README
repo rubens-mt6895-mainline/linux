@@ -92,24 +92,36 @@ af_floor/af_fallback.  See the module's MODULE_PARM_DESC strings.
 Autofocus
 ---------
 
-The DW9800V voice-coil motor is on the same I2C bus as the sensor (address
-0x0c).  Focus is open loop: a contrast search walks the 10-bit DAC over
-coarse->fine->hold and tracks the result with a slow wobble.  The metric is the
-mean absolute luma difference between the two pixels of every sampled output
-pair (Q8).  It is not normalised against scene brightness, so it carries no
-information when the scene has no contrast - a quiet dark frame reads 0..2
-while a normal room reads several hundred.  Two parameters keep that case from
-moving the lens: af_floor (default 200) is the value below which a sample is
-recorded but cannot win a comparison, and af_fallback (default 512, the middle
-of the DAC range) is where the lens is parked when a scan finds no contrast at
-all and no previous position is known.  The mechanical rest (0) is deliberately
-not used: it focuses this module at macro distance, about 0.4 m, which is the
-wrong end for a phone camera.  A scan that ends without a usable sample puts the
-lens back where it started and logs
+Only the rear IMX582 has a focus actuator: the DW9800V voice-coil motor on the
+same I2C bus as the sensor (address 0x0c).  The front IMX596, the ultrawide
+S5K4H7 and the macro GC02M1 are fixed focus - neither their device tree nodes
+nor the board's power rails carry an actuator - so the lens is only driven for
+the rear camera.
+
+Focus is open loop: a contrast search walks the 10-bit DAC over
+coarse->fine->hold and tracks the result with a wobble.  The metric is a
+contrast ratio - the sum of absolute luma differences over the sum of luma,
+times 1000 - so it is invariant against exposure and cannot saturate (an
+earlier linear luma clamped at 255, which made a normally lit room measure
+exactly zero).  Samples whose level is below CAMCAP_AF_MIN_LEVEL (6 per mille)
+are discarded as noise.  af_floor (default 20 per mille) is the level below
+which a sample is recorded but cannot win a comparison, and af_fallback
+(default 512, the middle of the DAC range) is where the lens is parked when a
+scan finds no usable sample and no previous position is known.  The mechanical
+rest (0) is deliberately not used: it focuses this module at macro distance,
+about 0.4 m, which is the wrong end for a phone camera.  A scan that ends
+without a usable sample puts the lens back where it started and logs
 ``cam_af: scan N found no contrast``; below the floor the hold branch neither
 wobbles nor rescans at all - it stays where it is until the scene gives the
-metric something to compare, and only then starts a fresh scan.  The wobble
-requires the same floor.  With af_floor=0 the old behaviour returns.
+metric something to compare, and only then starts a fresh scan, at most once
+per CAMCAP_AF_RESCAN_FRAMES (30) frames.  A wobble that loses doubles its own
+period (240 frames, up to CAMCAP_AF_WOBBLE_MAX 3000 frames, about 100 s) and a
+wobble that wins resets it, so a steady scene settles instead of being
+re-measured forever.  With af_floor=0 the old behaviour returns.
+
+The lens is ramped down to DAC 0 in 16-step moves of about 9 ms when the module
+is unloaded or when ``echo park > /proc/camcap`` is written, following the
+vendor driver's park sequence; 0 is the infinity end.
 
 The lens is driven from the capture path, so /proc/camcap's focus line only
 updates while frames are streaming.  Focus is also reachable from V4L2 through
