@@ -1027,8 +1027,13 @@ static bool cam_probe_trace;
 /*
  * AE/AWB state.  Everything here is written by the capture kthread (and, for
  * the controls, by the V4L2 control callbacks) and read by /proc.  The values
- * are independent scalars, so the races are benign: a reader either sees the
- * previous frame's value or this one's.
+ * are independent unsigned int scalars, so the races are benign: a store to an
+ * aligned word is single-copy atomic on arm64, so a reader sees either the
+ * previous frame's value or this one's, never a mix.  No lock is taken: the
+ * writers include the V4L2 control callbacks, which already run under the
+ * control handler's mutex and are entered with the vb2 queue lock held, so a
+ * third lock there would only add an ordering rule for no gain.  A one-frame
+ * stale value is corrected by the next governor pass.
  */
 struct cam_sensor_state {
 	unsigned int exposure;	/* 0x0202 coarse integration time */
@@ -1575,6 +1580,16 @@ static int cam_cap_arm_addr(dma_addr_t addr)
 
 	/* Make sure nothing is streaming into the buffer before we re-point it */
 	cam_cap_vf_off();
+
+	/*
+	 * Drop a completion bit left over from the previous arm: the poll below
+	 * treats the first set bit it sees as *this* frame arriving, so a stale
+	 * IMGO_DONE_ST would make the arm look instant.  Writing back what was
+	 * read is the usual write-1-to-clear and a no-op on a status register
+	 * that clears on read; with VFDATA_EN=0 nothing new can be latched
+	 * between the two accesses, so this cannot swallow a completion.
+	 */
+	cam_wr(CAMSV_INT_STATUS, cam_rd(CAMSV_INT_STATUS));
 
 	/* ---- SENINF routing: port 2 -> mux 1 -> cam_mux 3 -> this CAMSV ---- */
 	if (route_en && !(route_once && cam_route_done)) {
@@ -2670,7 +2685,7 @@ static void cam_lut_rebuild(void)
 	cam_lut_build(cam_lut_r, cam_wb_r_cur);
 	cam_lut_build(cam_lut_g, 256);
 	cam_lut_build(cam_lut_b, cam_wb_b_cur);
-	cam_lut_dirty = false;
+	WRITE_ONCE(cam_lut_dirty, false);
 	cam_lut_ver++;
 }
 
@@ -3268,7 +3283,6 @@ static void cam_vcm_park(void)
 #define CAMCAP_AF_WOBBLE_POINTS	3
 #define CAMCAP_AF_WOBBLE_GAIN_PCT 101	/* move only if >1% better */
 #define CAMCAP_AF_WOBBLE_MAX	3000	/* ~100 s: ask a static scene less often */
-#define CAMCAP_AF_FLAT_FRAMES	300	/* ~10 s before re-trying in a flat scene */
 
 enum cam_af_state {
 	CAM_AF_IDLE = 0,
@@ -4109,7 +4123,7 @@ static void cam_isp_governor(const struct cam_stats *in)
 
 		if (dr || db) {
 			cam_awb_frames++;
-			cam_lut_dirty = true;
+			WRITE_ONCE(cam_lut_dirty, true);
 		}
 
 		/* keep userspace's view of the manual controls accurate */
@@ -4871,14 +4885,22 @@ static void cam_conv_pool_stop(struct cam_v4l2_ctx *c)
 static void cam_conv_pool_start(struct cam_v4l2_ctx *c)
 {
 	unsigned int want = conv_threads ? conv_threads : 1;
+	unsigned int nproc = num_online_cpus();
 	unsigned int i, j;
 
 	if (want > CAMCAP_MAX_CONV)
 		want = CAMCAP_MAX_CONV;
+	/*
+	 * Never oversubscribe: this box is also somebody's phone, and a
+	 * powersave policy can take cores offline (measured 8 online, but the
+	 * parameter default is 8 regardless).
+	 */
+	if (want > nproc)
+		want = nproc;
 	if (want < 2) {
 		c->nconv = 0;
 		pr_info("convert: single threaded (1 of %u online CPUs)\n",
-			num_online_cpus());
+			nproc);
 		return;
 	}
 
@@ -5066,7 +5088,7 @@ static int cam_v4l2_grab(struct cam_v4l2_buf *buf)
 		return -EINVAL;
 
 	/* a control may have changed the curve while we were armed */
-	if (cam_lut_dirty)
+	if (READ_ONCE(cam_lut_dirty))
 		cam_lut_rebuild();
 
 	if (c) {
@@ -5421,7 +5443,7 @@ static void cam_v4l2_finish_slot(struct cam_v4l2_ctx *c, struct cam_slot *s)
 	}
 
 	/* a control may have changed the curve while the frame was in flight */
-	if (cam_lut_dirty)
+	if (READ_ONCE(cam_lut_dirty))
 		cam_lut_rebuild();
 
 	c->t_conv = cam_convert_frame(c, s->va, dst, &st);
@@ -5932,9 +5954,17 @@ static void cam_ctrl_update_exp_max(void)
 		return;
 
 	ctrl = cam_v4l2->ct_exposure;
-	__v4l2_ctrl_modify_range(ctrl, CAMCAP_EXP_MIN, (int)exp_max, 1,
-				 ctrl->val > (int)exp_max ? (int)exp_max
-							  : ctrl->val);
+	/*
+	 * Use the locking wrapper, not __v4l2_ctrl_modify_range(): the __
+	 * variant expects the handler mutex to be held, and cam_lock is the vb2
+	 * queue lock, not that mutex.  (The handler's lock is a pointer in this
+	 * kernel, so it must not be taken with "&" either.)  Lock order is
+	 * always cam_lock -> handler mutex; the s_ctrl callback runs with the
+	 * handler mutex held and never takes cam_lock, so there is no cycle.
+	 */
+	v4l2_ctrl_modify_range(ctrl, CAMCAP_EXP_MIN, (int)exp_max, 1,
+			       ctrl->val > (int)exp_max ? (int)exp_max
+							: ctrl->val);
 }
 
 /*
@@ -6076,11 +6106,18 @@ static int cam_mode_program(int idx)
 	 */
 	ret = cam_sensor_write8(0x0100, 0x00);
 	msleep(20);
-	if (mode_init_replay) {
+	/*
+	 * Do not let the init-table result overwrite a failed stream-off: a
+	 * one-off I2C error there would otherwise be swallowed, the mode table
+	 * and the stream-on would follow, and the switch would look like a
+	 * success while the sensor was left in the old mode.
+	 */
+	if (!ret && mode_init_replay)
 		ret = cam_mode_write_table(cam_imx582_tbl_init,
 					   CAMCAP_IMX582_INIT_NREGS, "init");
+	/* the PLL settling gap belongs to the sequence, not to the result */
+	if (mode_init_replay)
 		msleep(20);
-	}
 	if (!ret)
 		ret = cam_mode_write_table(m->regs, m->nregs, m->name);
 	/* VTS is written separately: it is what sets the frame rate */
@@ -6364,7 +6401,9 @@ static int cam_vidioc_enum_frameintervals(struct file *file, void *priv,
 			if (k++ != fival->index)
 				continue;
 
-			g = cam_gcd(fps, 100) ? cam_gcd(fps, 100) : 1;
+			if (!fps)
+				continue;	/* no interval to report */
+			g = cam_gcd(fps, 100);
 			fival->type = V4L2_FRMIVAL_TYPE_DISCRETE;
 			fival->discrete.numerator = 100 / g;
 			fival->discrete.denominator = fps / g;
@@ -6384,12 +6423,21 @@ static int cam_vidioc_enum_frameintervals(struct file *file, void *priv,
 static int cam_vidioc_g_parm(struct file *file, void *priv,
 			     struct v4l2_streamparm *p)
 {
+	unsigned int fps;
+
 	if (p->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		return -EINVAL;
 
+	/*
+	 * cam_mode_fps is fps_x100 and stays 0 if the load-time geometry
+	 * matched no table entry (that happens: "matches no table in
+	 * imx582_modes.h"), so never hand out a 1/0 interval.
+	 */
+	fps = cam_mode_fps / 100;
+
 	p->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
 	p->parm.capture.timeperframe.numerator = 1;
-	p->parm.capture.timeperframe.denominator = cam_mode_fps / 100;
+	p->parm.capture.timeperframe.denominator = fps ? fps : 30;
 	p->parm.capture.readbuffers = 0;
 
 	return 0;
@@ -6522,23 +6570,23 @@ static int cam_ctrl_s_ctrl(struct v4l2_ctrl *ctrl)
 		if (!cam_awb_auto) {
 			cam_wb_r_cur = cam_clamp_int(v, CAMCAP_WB_MIN,
 						     CAMCAP_WB_MAX);
-			cam_lut_dirty = true;
+			WRITE_ONCE(cam_lut_dirty, true);
 		}
 		break;
 	case V4L2_CID_BLUE_BALANCE:
 		if (!cam_awb_auto) {
 			cam_wb_b_cur = cam_clamp_int(v, CAMCAP_WB_MIN,
 						     CAMCAP_WB_MAX);
-			cam_lut_dirty = true;
+			WRITE_ONCE(cam_lut_dirty, true);
 		}
 		break;
 	case V4L2_CID_BRIGHTNESS:
 		out_brightness = cam_clamp_int(v, -128, 128);
-		cam_lut_dirty = true;
+		WRITE_ONCE(cam_lut_dirty, true);
 		break;
 	case V4L2_CID_CONTRAST:
 		out_contrast = cam_clamp_int(v, 0, 255);
-		cam_lut_dirty = true;
+		WRITE_ONCE(cam_lut_dirty, true);
 		break;
 	case V4L2_CID_SATURATION:
 		out_saturation = cam_clamp_int(v, 0, 255);
@@ -7227,7 +7275,7 @@ static int __init cam_cap_init(void)
 						 (int)again_max);
 		cam_sensor.dgain = cam_clamp_int((int)dgain_def, CAMCAP_DGAIN_MIN,
 						 (int)dgain_max);
-		cam_lut_dirty = true;
+		WRITE_ONCE(cam_lut_dirty, true);
 
 		ret = cam_v4l2_register();
 		if (ret) {
