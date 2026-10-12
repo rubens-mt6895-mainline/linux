@@ -3300,48 +3300,56 @@ block_size = <0x1000>;
 			compatible = "mediatek,mt6895-cam_main_r1a", "syscon";
 			reg = <0x1a000000 0x1000>;
 			#clock-cells = <1>;
+			power-domains = <&spm MT6895_POWER_DOMAIN_CAM_MAIN>;
 		};
 
 		camsys_rawa_clk: syscon@1a04f000 {
 			compatible = "mediatek,mt6895-camsys_rawa", "syscon";
 			reg = <0x1a04f000 0x1000>;
 			#clock-cells = <1>;
+			power-domains = <&spm MT6895_POWER_DOMAIN_CAM_SUBA>;
 		};
 
 		camsys_yuva_clk: syscon@1a06f000 {
 			compatible = "mediatek,mt6895-camsys_yuva", "syscon";
 			reg = <0x1a06f000 0x1000>;
 			#clock-cells = <1>;
+			power-domains = <&spm MT6895_POWER_DOMAIN_CAM_SUBA>;
 		};
 
 		camsys_rawb_clk: syscon@1a08f000 {
 			compatible = "mediatek,mt6895-camsys_rawb", "syscon";
 			reg = <0x1a08f000 0x1000>;
 			#clock-cells = <1>;
+			power-domains = <&spm MT6895_POWER_DOMAIN_CAM_SUBB>;
 		};
 
 		camsys_yuvb_clk: syscon@1a0af000 {
 			compatible = "mediatek,mt6895-camsys_yuvb", "syscon";
 			reg = <0x1a0af000 0x1000>;
 			#clock-cells = <1>;
+			power-domains = <&spm MT6895_POWER_DOMAIN_CAM_SUBB>;
 		};
 
 		camsys_rawc_clk: syscon@1a0cf000 {
 			compatible = "mediatek,mt6895-camsys_rawc", "syscon";
 			reg = <0x1a0cf000 0x1000>;
 			#clock-cells = <1>;
+			power-domains = <&spm MT6895_POWER_DOMAIN_CAM_SUBC>;
 		};
 
 		camsys_yuvc_clk: syscon@1a0ef000 {
 			compatible = "mediatek,mt6895-camsys_yuvc", "syscon";
 			reg = <0x1a0ef000 0x1000>;
 			#clock-cells = <1>;
+			power-domains = <&spm MT6895_POWER_DOMAIN_CAM_SUBC>;
 		};
 
 		camsys_mraw_clk: syscon@1a170000 {
 			compatible = "mediatek,mt6895-camsys_mraw", "syscon";
 			reg = <0x1a170000 0x1000>;
 			#clock-cells = <1>;
+			power-domains = <&spm MT6895_POWER_DOMAIN_CAM_MRAW>;
 		};
 
 		mdpsys_config_clk: syscon@1f000000 {
