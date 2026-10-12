@@ -225,7 +225,7 @@
 			no-map;
 			compatible = "mediatek,md_mem_usage";
 		};
-		mblock-30-ccci_tag_mem {
+		ccci_tag_mem: mblock-30-ccci_tag_mem {
 			reg = <0x00 0xbf6f0000 0x00 0x10000>;
 			no-map;
 			compatible = "mediatek,ccci_tag_mem";
@@ -561,6 +561,22 @@
 			vid = <3>;
 			pid = <2>;
 		};
+	};
+	mddriver: modem@10209000 {
+		compatible = "mediatek,mt6895-ccci-md";
+		/* AP CCIF0 寄存器 + MD1 配置/启动统计窗口 */
+		reg = <0x00 0x10209000 0x00 0x1000>,
+		      <0x00 0x1020e300 0x00 0x400>;
+		reg-names = "ccif", "md-cfg";
+		/* 253 = MD WDT, 241 = CCIF0 AP, 242 = CCIF0 MD（与 vendor 顺序一致，按 index 取） */
+		interrupts = <GIC_SPI 253 IRQ_TYPE_LEVEL_HIGH 0>,
+			     <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH 0>,
+			     <GIC_SPI 242 IRQ_TYPE_LEVEL_HIGH 0>;
+		power-domains = <&spm MT6895_POWER_DOMAIN_MD>;
+		ccci-infracfg = <&infracfg_ao>;
+		ccci-topckgen = <&topckgen>;
+		memory-region = <&ccci_tag_mem>;
+		status = "okay";
 	};
 };
 

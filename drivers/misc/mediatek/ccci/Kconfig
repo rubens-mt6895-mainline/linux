@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config MTK_CCCI_MD
+	tristate "MediaTek MT6895 CCCI / modem bring-up"
+	depends on ARCH_MEDIATEK || COMPILE_TEST
+	depends on PM
+	depends on REGULATOR
+	help
+	  Minimal mainline driver for the MediaTek CCCI / modem (MD) block on
+	  MT6895 (Dimensity 8100).  It brings up the modem rails and the MD
+	  power domain, releases the modem CPU from reset through the stock
+	  ATF SIP call, reads the LK boot tag table out of the reserved
+	  ccci_tag_mem region and then polls CCIF0 for the first handshake.
+
+	  The modem firmware itself is loaded by the bootloader (LK), not by
+	  this driver.
+
+	  Say M here if you want to bring up the cellular modem on such a
+	  device.  If unsure, say N.
