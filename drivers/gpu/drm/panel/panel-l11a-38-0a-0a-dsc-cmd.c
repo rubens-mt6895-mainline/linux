@@ -571,43 +571,37 @@ static int lcm_unprepare(struct drm_panel *panel)
 	if (!ctx->prepared)
 		return 0;
 
+	/* K50 blanking fix, part 2. The downstream power-down sequence that used to
+	 * live here (0x10 sleep-in, reset line asserted, dvdd low, then vci/vddi
+	 * disabled) does blank the panel, but it takes the whole display block down
+	 * with it: the touch controller dropped off the I2C bus
+	 * ("[FTS] fts_error_event_handler Received event FF FF FF FF") and ~37 s
+	 * later both Bluetooth HID links died to supervision timeout, so the screen
+	 * went dark with no input device left to wake it up again.
+	 *
+	 * Keep every rail and the reset line exactly as probe() left them, and blank
+	 * with display commands only:
+	 *   0x28        display off
+	 *   0x51 00 00  brightness 0 (belt and braces; the init table programs 0x51
+	 *               to 0x0000 and the panel is black at that level)
+	 * The power domains are then identical to the pre-fix state in which
+	 * Bluetooth and touch kept working, and lcm_panel_init() re-programs the
+	 * panel on the next unblank (the panel-ext enable path calls it whenever
+	 * ctx->prepared is false) including the bl_tb0 brightness restore.
+	 *
+	 * The matching lcm_panel_vci_disable()/lcm_panel_vddi_disable() calls are
+	 * deliberately not issued: the rails stay up for the rest of the boot and
+	 * the regulator refcount only ever grows, so the "unbalanced disable"
+	 * failure mode described in lcm_panel_vci_enable() cannot happen.
+	 */
 	lcm_dcs_write_seq_static(ctx, 0x28);
 	msleep(50);
-	lcm_dcs_write_seq_static(ctx, 0x10);
-	msleep(150);
+	lcm_dcs_write_seq(ctx, 0x51, 0x00, 0x00);
+	msleep(50);
 
 	ctx->error = 0;
 	ctx->prepared = false;
 	ctx->crc_level = 0;
-
-	ctx->reset_gpio =
-		devm_gpiod_get(ctx->dev, "reset", GPIOD_OUT_HIGH);
-	if (IS_ERR(ctx->reset_gpio)) {
-		dev_err(ctx->dev, "%s: cannot get reset_gpio %ld\n",
-			__func__, PTR_ERR(ctx->reset_gpio));
-		return PTR_ERR(ctx->reset_gpio);
-	}
-	gpiod_set_value(ctx->reset_gpio, 0);
-	devm_gpiod_put(ctx->dev, ctx->reset_gpio);
-
-
-	udelay(1000);
-
-	ctx->dvdd_gpio = devm_gpiod_get_index(ctx->dev,
-		"dvdd", 0, GPIOD_OUT_HIGH);
-	if (IS_ERR(ctx->dvdd_gpio)) {
-		dev_err(ctx->dev, "%s: cannot get dvdd gpio %ld\n",
-			__func__, PTR_ERR(ctx->dvdd_gpio));
-		return PTR_ERR(ctx->dvdd_gpio);
-	}
-	gpiod_set_value(ctx->dvdd_gpio, 0);
-	devm_gpiod_put(ctx->dev, ctx->dvdd_gpio);
-
-	udelay(2000);
-	lcm_panel_vci_disable(ctx->dev);
-	udelay(2000);
-	lcm_panel_vddi_disable(ctx->dev);
-	udelay(2000);
 	atomic_set(&doze_enable, 0);
 	return 0;
 }
