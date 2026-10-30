@@ -2654,6 +2654,20 @@ static int lcm_probe(struct mipi_dsi_device *dsi)
 	ctx->panel.funcs = &lcm_drm_funcs;
 	ctx->panel.connector_type = DRM_MODE_CONNECTOR_DSI;
 
+	/* The bootloader (LK) hands over a panel that is already powered and
+	 * showing a picture, which is why this driver starts with ctx->prepared
+	 * and ctx->enabled set. The DRM core keeps its own copy of that state in
+	 * drm_panel.prepared/enabled, and it starts out false, so
+	 * drm_panel_unprepare()/drm_panel_disable() returned early with
+	 * "Skipping unprepare of already unprepared panel" /
+	 * "Skipping disable of already disabled panel" and never reached
+	 * lcm_unprepare()/lcm_disable(): the panel kept its power rails and its
+	 * 0x28/0x10 display-off commands were never sent, so blanking left the
+	 * screen lit. Keep both states in sync with the hardware.
+	 */
+	ctx->panel.prepared = true;
+	ctx->panel.enabled = true;
+
 	drm_panel_add(&ctx->panel);
 
 	ret = mipi_dsi_attach(dsi);
