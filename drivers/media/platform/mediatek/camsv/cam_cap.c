@@ -1034,6 +1034,7 @@ static u32 cam_last_int_status;		/* final INT_STATUS of the last arm */
 static u32 cam_last_fbc_ctl2;		/* final FBC_IMGO_CTL2 of the last arm */
 static unsigned int cam_arm_count;	/* number of successful arms */
 static bool cam_route_done;		/* route_once: already programmed? */
+static unsigned long cam_route_gen;	/* bumped by cam_route(); an arm aborts if it moves */
 static u32 cam_last_seq;		/* FRAME_SEQ_NO of the last arm */
 static int cam_last_ret;		/* last command result */
 
@@ -1463,8 +1464,18 @@ static int cam_route(void)
 
 	/* 0. verify the D-PHY / CSI2 context that is already streaming */
 	r = sen_rd(csi2 + 0x00);
-	if ((r & 0x3f) != 0x0f)
-		pr_warn("route: CSI2_EN=%#x, expected 0xF for 4 lanes\n", r & 0x3f);
+	if ((r & 0x3f) != 0x0f) {
+		/*
+		 * Nothing else turns the CSI2 receiver on in this bring-up:
+		 * the sensor streams, but with CSI2_EN clear the SENINF side
+		 * never sees a packet and CAMSV never arms a frame
+		 * (INT_STATUS stayed 0x0 for the whole 2 s poll).  The route
+		 * is this module's job, so set the 4-lane enable here.
+		 */
+		sen_wr(csi2 + 0x00, (r & ~0x3fu) | 0x0fu);	/* 4-lane CSI2_EN */
+		r = sen_rd(csi2 + 0x00);
+		pr_info("route: CSI2_EN set to %#x (lanes 0xf)\n", r & 0x3f);
+	}
 	r = sen_rd(csi2 + 0x20);
 	pr_info("route: S0_DI_CTRL was %#010x before step 0b\n", r);
 	r = sen_rd(csi2 + 0x60);
@@ -1502,11 +1513,17 @@ static int cam_route(void)
 			route_intf / 2, r);
 	}
 	r = sen_rd(ctrl + 0x10);
-	if (!(r & 0x1))
-		pr_warn("route: SENINF_CSI2_CTRL=%#010x (b0 expected 1)\n", r);
+	if (!(r & 0x1)) {
+		sen_wr(ctrl + 0x10, r | 0x1);	/* SENINF_CSI2_CTRL.CSI2_EN */
+		r = sen_rd(ctrl + 0x10);
+		pr_info("route: SENINF_CSI2_CTRL set to %#010x (b0)\n", r);
+	}
 	r = sen_rd(ctrl + 0x00);
-	if (!(r & 0x1))
-		pr_warn("route: SENINF_CTRL=%#010x (SENINF_EN b0 expected 1)\n", r);
+	if (!(r & 0x1)) {
+		sen_wr(ctrl + 0x00, r | 0x1);	/* SENINF_CTRL.SENINF_EN */
+		r = sen_rd(ctrl + 0x00);
+		pr_info("route: SENINF_CTRL set to %#010x (b0)\n", r);
+	}
 
 	/* 1. cam_mux block into a known state (defined double-buffer page) */
 	r = sen_rd(SENINF_GCSR_CTRL);
@@ -1569,6 +1586,14 @@ static int cam_route(void)
 		sen_rd(muxb + SENINF_MUX_OPT),
 		route_mux / 4, sen_rd(topword));
 
+	/*
+	 * Any arm that is still polling for its frame when the routing is
+	 * changed can never complete: its CAMSV source has been switched away
+	 * under it.  Bump the generation so those in-flight polls abort
+	 * instead of spinning out the full CAMCAP_ARM_TIMEOUT_MS.
+	 */
+	WRITE_ONCE(cam_route_gen, cam_route_gen + 1);
+
 	return err;
 }
 
@@ -1604,6 +1629,7 @@ static int cam_cap_arm_addr(dma_addr_t addr)
 	s64 t_start = ktime_get_ns();
 	s64 elapsed;
 	u32 seq = cam_arm_count + 1;
+	unsigned long gen = 0;
 	bool done = false;
 
 	cam_frame_ready = false;
@@ -1634,6 +1660,14 @@ static int cam_cap_arm_addr(dma_addr_t addr)
 		else
 			cam_route_done = true;
 	}
+
+	/*
+	 * Snapshot the route generation.  If a concurrent stream-on / handback
+	 * re-programs the routing while this arm is polling, the poll aborts
+	 * below (see the cam_route_gen check) instead of waiting out the whole
+	 * CAMCAP_ARM_TIMEOUT_MS.
+	 */
+	gen = READ_ONCE(cam_route_gen);
 
 	/* ---- mtk_cam_sv_enquehwbuf(dev, addr, seq) ---- */
 	/* FRAME_SEQ_NO = frame sequence number */
@@ -1679,6 +1713,33 @@ static int cam_cap_arm_addr(dma_addr_t addr)
 
 		elapsed = ktime_get_ns() - t_start;
 		if (elapsed >= (s64)CAMCAP_ARM_TIMEOUT_MS * 1000000LL)
+			break;
+
+		/*
+		 * stop_streaming() is waiting for the capture thread to finish
+		 * this arm; abort the poll instead of spinning out the full
+		 * 2 s timeout.  A switch between cameras while an app is
+		 * recording used to stall the viewfinder for that long here.
+		 *
+		 * This poll also runs straight from the /proc/camcap "arm"
+		 * write, i.e. in the context of whatever process echoed the
+		 * command.  kthread_should_stop() dereferences
+		 * to_kthread(current), which is NULL for a user task: the
+		 * first arm from procfs took a level-0 translation fault at
+		 * 0x0 in kthread_should_stop+0x14 and left cam_lock held, so
+		 * every later cfg/arm/stop write hung.  Only ask when the
+		 * caller really is a kthread.
+		 */
+		if ((current->flags & PF_KTHREAD) && kthread_should_stop())
+			break;
+
+		/*
+		 * A concurrent stream-on / handback re-routed the SENINF/CAM_MUX
+		 * under this arm; its CAMSV source is gone, so the frame can
+		 * never complete.  Abort now (the caller drops the buffer) rather
+		 * than holding up the new stream for the remaining timeout.
+		 */
+		if (READ_ONCE(cam_route_gen) != gen)
 			break;
 
 		/*
@@ -4743,6 +4804,15 @@ static inline int cam_metric_px(u32 g)
  * out_flip_v = 7.  Both stay reachable from sysfs, and /root/zz_orient.sh sets
  * any of the four combinations for one board live.
  *
+ * 2026-10-25, Debian 13 + GNOME Snapshot (this is the build that ships here):
+ * the user saw the preview left to right reversed on the main camera, the
+ * ultrawide and the macro, while the front camera looked right.  The main path
+ * had no switch at all back then (it is pinned to the 180 degree rotation), so
+ * main_mirror/main_flip_v were added and the auxiliary bits re-measured: with
+ * main_mirror = 1, out_mirror = 2 (S5K4H7 only) and out_flip_v = 7 all four are
+ * right in GNOME Snapshot.  The 10-11 numbers above are kept because Kamoso on
+ * the old userland differed; the ones that ship are these.
+ *
  * One bit per auxiliary board -- bit 0 = IMX596 (/dev/video1), 1 = S5K4H7
  * (video2), 2 = GC02M1 (video3).  out_mirror takes the mirror back out by
  * writing the 4-byte groups of a row in the other direction, out_flip_v does
@@ -4751,14 +4821,34 @@ static inline int cam_metric_px(u32 g)
  * /sys/module/cam_cap/parameters/ and apply to the next converted frame: no
  * rebuild, and the sensor registers never move.
  */
-static unsigned int out_mirror = 4;
+static unsigned int out_mirror = 2;
 module_param(out_mirror, uint, 0644);
 MODULE_PARM_DESC(out_mirror,
-		 "mirror the auxiliary cameras left to right (one bit per auxiliary board; default 4 = GC02M1 only, measured 2026-10-11)");
+		 "mirror the auxiliary cameras left to right (one bit per auxiliary board; default 2 = S5K4H7 only, measured 2026-10-25 in GNOME Snapshot)");
 static unsigned int out_flip_v = 7;
 module_param(out_flip_v, uint, 0644);
 MODULE_PARM_DESC(out_flip_v,
 		 "flip the auxiliary cameras top to bottom (one bit per auxiliary board; default 7 = all three, measured 2026-10-11: the auxiliary readout is rotated 180 degrees against the main camera)");
+
+/*
+ * Main camera orientation, 2026-10-25.  The main path is pinned to the 180
+ * degree rotation -- groups and rows are both written backwards -- because
+ * that is how the IMX582 module sits.  In GNOME Snapshot (Debian 13, fresh
+ * install) the user reported the preview left to right reversed on the main
+ * camera as well as the ultrawide and macro, while the front camera looked
+ * right.  Both halves of the main rotation are therefore runtime switches now:
+ * 0 keeps the historic rotation, 1 takes that half back out.  Same mechanism as
+ * out_mirror/out_flip_v -- read once per conversion, so the next converted
+ * frame follows and neither a rebuild nor a reload is needed.
+ */
+static unsigned int main_mirror = 1;
+module_param(main_mirror, uint, 0644);
+MODULE_PARM_DESC(main_mirror,
+		 "take the left-right half of the main camera 180 degree rotation back out (0 = historic, 1 = flipped)");
+static unsigned int main_flip_v;
+module_param(main_flip_v, uint, 0644);
+MODULE_PARM_DESC(main_flip_v,
+		 "take the top-bottom half of the main camera 180 degree rotation back out (0 = historic, 1 = flipped)");
 
 /* Is the bit of `which` that belongs to the board streaming now set? */
 static bool cam_aux_flip(unsigned int which)
@@ -4769,6 +4859,23 @@ static bool cam_aux_flip(unsigned int which)
 		return false;
 
 	return !!(which & BIT(idx - 1));
+}
+
+/* Orientation of the board streaming right now, main camera included. */
+static bool cam_out_mirror_x(void)
+{
+	if (cam_active == cam_boards)
+		return !!main_mirror;
+
+	return cam_aux_flip(out_mirror);
+}
+
+static bool cam_out_mirror_y(void)
+{
+	if (cam_active == cam_boards)
+		return !!main_flip_v;
+
+	return cam_aux_flip(out_flip_v);
 }
 
 static void cam_v4l2_convert_full_ref(const u8 *src, u8 *dst, unsigned int first,
@@ -4789,8 +4896,8 @@ static void cam_v4l2_convert_full_ref(const u8 *src, u8 *dst, unsigned int first
 	/* same tap-to-colour switch as the 2x2 path, see there */
 	const u8 *lut_ee = rb_swap ? cam_lut_b : cam_lut_r;	/* (0,0) tap */
 	const u8 *lut_oo = rb_swap ? cam_lut_r : cam_lut_b;	/* (1,1) tap */
-	const bool mirror_x = cam_aux_flip(out_mirror);
-	const bool mirror_y = cam_aux_flip(out_flip_v);
+	const bool mirror_x = cam_out_mirror_x();
+	const bool mirror_y = cam_out_mirror_y();
 
 	for (y = first; y < last; y++) {
 		const u8 *l0 = src + (size_t)y * stride;
@@ -4949,8 +5056,8 @@ static void cam_v4l2_convert_full_fast(const u8 *src, u8 *dst,
 	/* same tap-to-colour switch as the 2x2 path, see there */
 	const u8 *lut_ee = rb_swap ? cam_lut_b : cam_lut_r;	/* (0,0) tap */
 	const u8 *lut_oo = rb_swap ? cam_lut_r : cam_lut_b;	/* (1,1) tap */
-	const bool mirror_x = cam_aux_flip(out_mirror);
-	const bool mirror_y = cam_aux_flip(out_flip_v);
+	const bool mirror_x = cam_out_mirror_x();
+	const bool mirror_y = cam_out_mirror_y();
 
 	/*
 	 * The row window normally comes from the worker (allocated once per
@@ -5120,8 +5227,8 @@ static void cam_v4l2_convert_band(const u8 *src, u8 *dst, unsigned int first,
 	const int ub = rb_swap ? -43 : 128;
 	const int va = rb_swap ? -21 : 128;
 	const int vb = rb_swap ? 128 : -21;
-	const bool mirror_x = cam_aux_flip(out_mirror);
-	const bool mirror_y = cam_aux_flip(out_flip_v);
+	const bool mirror_x = cam_out_mirror_x();
+	const bool mirror_y = cam_out_mirror_y();
 
 	for (y = first; y < last; y++) {
 		const u8 *l0 = src + (size_t)(y * CAMCAP_BIN) * stride;
@@ -6217,8 +6324,15 @@ static int cam_vb2_queue_setup(struct vb2_queue *q, unsigned int *num_buffers,
 
 	*num_planes = 1;
 	sizes[0] = size;
-	if (*num_buffers < 2)
-		*num_buffers = 2;
+	/*
+	 * K50: a recording app that encodes in software (kamoso + openh264/vp8,
+	 * ~18 fps on the A78 cores) consumes frames much slower than the sensor
+	 * produces them.  With only two buffers the vb2 pool drains instantly, the
+	 * engine blocks with no free buffer and the viewfinder freezes.  Keep a
+	 * small reservoir so a slow consumer sees live frames instead of a stall.
+	 */
+	if (*num_buffers < 6)
+		*num_buffers = 6;
 
 	/* the measured proof that reqbufs sized for the node that asked */
 	pr_info("v4l2: reqbufs %u buffers of %u bytes (%s)\n", *num_buffers,
@@ -6427,6 +6541,23 @@ static void cam_vb2_stop_streaming(struct vb2_queue *q)
 	if (cam_base) {
 		mutex_lock(&cam_lock);
 		cam_cap_vf_off();
+		/*
+		 * K50/rubens: hand the engine back to node 0's camera when an
+		 * auxiliary node stops, so an app switching back to the main camera
+		 * starts cleanly instead of hitting the "node 0 refused" -EBUSY
+		 * path (engine on another board) and showing a stuck/black
+		 * viewfinder.  The re-route runs here with the arm thread already
+		 * stopped and VFDATA disabled - never from inside arm, which is
+		 * what hung this SoC hard on 2026-10-09.
+		 */
+		if (cam_nodes > 1 && cam_active != &cam_boards[0]) {
+			cam_engine_restore();
+			if (route_en && !cam_route()) {
+				cam_route_done = true;
+				pr_info("v4l2: engine handed back to %s on stop\n",
+					cam_active->name);
+			}
+		}
 		mutex_unlock(&cam_lock);
 	}
 
@@ -7021,6 +7152,19 @@ static int cam_vidioc_enum_framesizes(struct file *file, void *priv,
 			unsigned int w = bd->modes[i].hsize / b;
 			unsigned int h = bd->modes[i].vsize / b;
 			unsigned int k;
+
+			/*
+			 * K50/rubens: cap the advertised capture sizes at 2000x1500.
+			 * The only working H.264 encoder on this box (openh264, SW)
+			 * runs at ~27 fps here and is hard-limited to 9.4 MP, so the
+			 * 4000x3000/4000x2256 modes (12/9 MP at up to 60 fps) make the
+			 * recording branch stall and freeze the viewfinder.  Cap the
+			 * menu so camera apps negotiate a size the encoder can keep up
+			 * with; the full-size modes stay selectable through an explicit
+			 * VIDIOC_S_FMT from tools like v4l2-ctl.
+			 */
+			if (w > 2000 || h > 1500)
+				continue;
 
 			for (k = 0; k < n; k++)
 				if (seen[k].w == w && seen[k].h == h)
